@@ -495,6 +495,7 @@ pub struct DrawingInfo {
     pub hidden: bool,
     /// Macro run when the object is clicked (`Module1.Refresh`, `'Book.xlsm'!Refresh`).
     pub macro_name: Option<String>,
+    #[serde(skip)]
     pub compat_spid: Option<String>,
     /// Position in the file's drawing (0 = bottom); objects without one go on top.
     pub order: Option<u32>,

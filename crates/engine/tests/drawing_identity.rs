@@ -361,3 +361,42 @@ fn drawing_identity_chart_links_follow_sheet_ownership_through_undo_and_redo() {
         }
     }
 }
+
+#[test]
+fn drawing_identity_json_reload_cannot_restore_detached_legacy_links() {
+    use gridcraft_engine::io::{base64_decode, base64_encode};
+    use std::io::Read;
+
+    let mut session = workbook_with_legacy_links();
+    let saved = session.execute("file.saveBytes", json!({"format": "json"})).unwrap();
+    let bytes = base64_decode(saved["base64"].as_str().unwrap()).unwrap();
+    let document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(document["sheets"][0].get("preserved").is_none());
+    for kind in ["images", "charts", "shapes"] {
+        for object in document["sheets"][0][kind].as_array().unwrap() {
+            assert!(object["info"].get("compat_spid").is_none());
+        }
+    }
+    for old_json in [false, true] {
+        let mut document = document.clone();
+        if old_json {
+            for kind in ["images", "charts", "shapes"] {
+                for object in document["sheets"][0][kind].as_array_mut().unwrap() {
+                    object["info"]["compat_spid"] = json!("_x0000_s1025");
+                }
+            }
+        }
+        let bytes = serde_json::to_vec(&document).unwrap();
+        let mut reopened = Session::new();
+        reopened.execute("file.open", json!({"name": "drawings.json", "base64": base64_encode(&bytes)})).unwrap();
+        let sheet = reopened.doc().unwrap().wb.sheet(0).unwrap();
+        assert!(sheet.preserved.is_none());
+        assert!(infos(sheet).iter().all(|(_, info)| info.compat_spid.is_none()));
+        let saved = reopened.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap();
+        let bytes = base64_decode(saved["base64"].as_str().unwrap()).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut drawing = String::new();
+        zip.by_name("xl/drawings/drawing1.xml").unwrap().read_to_string(&mut drawing).unwrap();
+        assert!(!drawing.contains("compatExt"));
+    }
+}

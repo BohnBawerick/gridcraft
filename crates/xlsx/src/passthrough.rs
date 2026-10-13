@@ -738,11 +738,16 @@ fn shape_numbers(vml: &str) -> Vec<u64> {
         .collect()
 }
 
+pub(crate) fn vml_note_layout(kept: &str) -> Option<(usize, u64)> {
+    let close = kept.rfind("</xml>")?;
+    let block = shape_numbers(kept).into_iter().max().unwrap_or(0) / 1024 + 1;
+    Some((close, block))
+}
+
 /// Kept VML (controls, OLE objects) plus GridCraft's note shapes: the notes get ids in a fresh
 /// shape block so they can't collide with the kept shapes the sheet XML refers to.
 fn merge_vml(kept: &str, ours: &str) -> String {
-    let Some(close) = kept.rfind("</xml>") else { return ours.to_string() };
-    let block = shape_numbers(kept).into_iter().max().unwrap_or(0) / 1024 + 1;
+    let Some((close, block)) = vml_note_layout(kept) else { return ours.to_string() };
     let mut add = String::new();
     if !kept.contains("id=\"_x0000_t202\"")
         && let Some(i) = ours.find("<v:shapetype")

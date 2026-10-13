@@ -1,6 +1,8 @@
 //! Drawing objects keep their names, ids, hidden flags, macros and stacking order on save, so a
 //! macro-enabled workbook's buttons stay bound and its hidden objects stay hidden.
 
+use std::sync::Arc;
+
 use gridcraft_model::{Shape, ShapeKind};
 
 use super::minimal;
@@ -261,6 +263,25 @@ fn every_serializer_keeps_compatibility_links_and_chartex_visibility() {
         let mut chart = sheet.charts[0].clone();
         chart.kind = ChartKind::Waterfall;
         sheet.charts.push(chart);
+        let (legacy, _) = read_xlsx(&legacy_control(COMPAT, false)).unwrap();
+        sheet.preserved = legacy.sheet(0).unwrap().preserved.clone();
+        let mut vml = String::from(r#"<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:x="urn:schemas-microsoft-com:office:excel">"#);
+        for (index, info) in sheet
+            .images
+            .iter_mut()
+            .map(|o| &mut o.info)
+            .chain(sheet.charts.iter_mut().map(|o| &mut o.info))
+            .chain(sheet.shapes.iter_mut().map(|o| &mut o.info))
+            .enumerate()
+        {
+            let id = 1025 + index as u32;
+            info.file_id = Some(id);
+            info.order = Some(index as u32);
+            info.compat_spid = Some(format!("_x0000_s{id}"));
+            vml.push_str(&format!(r#"<v:shape id="_x0000_s{id}"><x:ClientData ObjectType="Button"/></v:shape>"#));
+        }
+        vml.push_str("</xml>");
+        Arc::make_mut(sheet.preserved.as_mut().unwrap()).vml.as_mut().unwrap().data = Arc::from(vml.into_bytes());
         let bytes = write_xlsx(&wb).unwrap();
         let mut pkg = Package::open(&bytes).unwrap();
         let drawing = pkg.read_xml("xl/drawings/drawing1.xml").unwrap().unwrap();
@@ -269,7 +290,8 @@ fn every_serializer_keeps_compatibility_links_and_chartex_visibility() {
         assert_eq!(props.len(), 6);
         for prop in props {
             assert_eq!(prop.flag("hidden", false), hidden);
-            assert_eq!(prop.path(&["extLst", "ext", "compatExt"]).unwrap().attr("spid"), Some("_x0000_s1025"));
+            let spid = format!("_x0000_s{}", prop.attr("id").unwrap());
+            assert_eq!(prop.path(&["extLst", "ext", "compatExt"]).unwrap().attr("spid"), Some(spid.as_str()));
         }
         let (back, report) = read_xlsx(&bytes).unwrap();
         assert!(!report.warnings.iter().any(|w| w.contains("cNvPr")), "{:?}", report.warnings);
@@ -278,9 +300,17 @@ fn every_serializer_keeps_compatibility_links_and_chartex_visibility() {
         assert_eq!(sheet.shapes[1].kind, ShapeKind::Ink);
         assert_eq!(sheet.charts[1].kind, ChartKind::Waterfall);
         for info in sheet.shapes.iter().map(|o| &o.info).chain(sheet.images.iter().map(|o| &o.info)).chain(sheet.charts.iter().map(|o| &o.info)) {
-            assert_eq!(info.compat_spid.as_deref(), Some("_x0000_s1025"));
+            assert_eq!(info.compat_spid, Some(format!("_x0000_s{}", info.file_id.unwrap())));
             assert_eq!(info.hidden, hidden);
         }
+        wb.sheet_mut(0).unwrap().preserved = None;
+        let saved = write_xlsx(&wb).unwrap();
+        let mut pkg = Package::open(&saved).unwrap();
+        let drawing = pkg.read_xml("xl/drawings/drawing1.xml").unwrap().unwrap();
+        let mut props = vec![];
+        properties(&drawing, &mut props);
+        assert_eq!(props.len(), 6);
+        assert!(props.iter().all(|p| p.path(&["extLst", "ext", "compatExt"]).is_none()));
     }
 }
 
@@ -320,4 +350,125 @@ fn alternate_content_control_twins_keep_vml_without_creating_objects() {
             }
         }
     }
+}
+
+fn replace_part(bytes: &[u8], name: &str, replacement: Option<&[u8]>) -> Vec<u8> {
+    use std::io::Read;
+
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut parts = vec![];
+    for index in 0..zip.len() {
+        let mut part = zip.by_index(index).unwrap();
+        let mut data = vec![];
+        if part.name() == name {
+            let Some(replacement) = replacement else { continue };
+            data.extend_from_slice(replacement);
+        } else {
+            part.read_to_end(&mut data).unwrap();
+        }
+        parts.push((part.name().to_owned(), data));
+    }
+    super::make_zip(&parts.iter().map(|(n, d)| (n.as_str(), d.as_slice())).collect::<Vec<_>>())
+}
+
+#[test]
+fn discarded_vml_clears_compatibility_links_and_names_the_object() {
+    for part in ["xl/drawings/vmlDrawing1.vml", "xl/ctrlProps/ctrlProp1.xml"] {
+        let bytes = replace_part(&legacy_control(COMPAT, false), part, None);
+        let (wb, report) = read_xlsx(&bytes).unwrap();
+        let sheet = wb.sheet(0).unwrap();
+        assert!(sheet.preserved.as_ref().and_then(|p| p.vml.as_ref()).is_none());
+        assert!(sheet.shapes[0].info.compat_spid.is_none());
+        assert!(report.warnings.iter().any(|w| w.contains("Legacy button") && w.contains("compatibility link removed")), "{:?}", report.warnings);
+        let bytes = write_xlsx(&wb).unwrap();
+        let mut pkg = Package::open(&bytes).unwrap();
+        let drawing = pkg.read_xml("xl/drawings/drawing1.xml").unwrap().unwrap();
+        assert!(drawing.children[0].path(&["sp", "nvSpPr", "cNvPr", "extLst"]).is_none());
+    }
+}
+
+fn note() -> gridcraft_model::Comment {
+    gridcraft_model::Comment {
+        author: "Author".into(),
+        text: "A synthetic note".into(),
+        replies: vec![],
+        threaded: false,
+        resolved: false,
+        visible: true,
+        dates: vec![],
+    }
+}
+
+#[test]
+fn note_ids_cannot_replace_missing_legacy_shapes() {
+    for backing in ["kept", "missing", "collision", "unmergeable"] {
+        let (mut wb, _) = read_xlsx(&legacy_control(COMPAT, false)).unwrap();
+        let sheet = wb.sheet_mut(0).unwrap();
+        sheet.comments.insert(gridcraft_core::CellRef::new(0, 0), note());
+        if backing == "missing" {
+            sheet.preserved = None;
+        } else if backing != "kept" {
+            let vml = Arc::make_mut(sheet.preserved.as_mut().unwrap()).vml.as_mut().unwrap();
+            let text = std::str::from_utf8(&vml.data).unwrap();
+            let text = if backing == "collision" {
+                text.replace("_x0000_s1025", "_x0000_s1&#48;25")
+            } else {
+                text.replace("<xml ", "<v:xml ").replace("</xml>", "</v:xml>")
+            };
+            vml.data = Arc::from(text.into_bytes());
+        }
+        assert_eq!(sheet.shapes[0].info.compat_spid.as_deref(), Some("_x0000_s1025"));
+        let bytes = write_xlsx(&wb).unwrap();
+        let mut pkg = Package::open(&bytes).unwrap();
+        let drawing = pkg.read_xml("xl/drawings/drawing1.xml").unwrap().unwrap();
+        let link = drawing.children[0].path(&["sp", "nvSpPr", "cNvPr", "extLst", "ext", "compatExt"]);
+        let vml = pkg.read_xml("xl/drawings/vmlDrawing1.vml").unwrap().unwrap();
+        let note = vml.kids("shape").find(|s| s.child("ClientData").is_some_and(|c| c.attr("ObjectType") == Some("Note"))).unwrap();
+        if backing == "kept" {
+            let spid = link.unwrap().attr("spid").unwrap();
+            assert_ne!(note.attr("id"), Some(spid));
+            assert!(vml.kids("shape").any(|s| s.attr("id") == Some(spid) && s.child("ClientData").unwrap().attr("ObjectType") == Some("Button")));
+        } else {
+            assert!(link.is_none());
+            assert_eq!(note.attr("id"), Some("_x0000_s1025"));
+        }
+    }
+}
+
+#[test]
+fn compatibility_links_require_real_unique_non_note_backing_shapes() {
+    for vml in [
+        r#"<xml xmlns:v="urn:schemas-microsoft-com:vml"><v:shapetype id="_x0000_s1025"/></xml>"#,
+        r#"<xml xmlns:v="urn:schemas-microsoft-com:vml"><v:shape id="_x0000_s1026"/></xml>"#,
+        r#"<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:x="urn:schemas-microsoft-com:office:excel"><v:shape id="_x0000_s1025"><x:ClientData ObjectType="Note"/></v:shape></xml>"#,
+        r#"<xml xmlns:v="urn:schemas-microsoft-com:vml"><v:shape id="_x0000_s1025"/><v:shape id="_x0000_s1025"/></xml>"#,
+    ] {
+        let (mut wb, _) = read_xlsx(&legacy_control(COMPAT, false)).unwrap();
+        let sheet = wb.sheet_mut(0).unwrap();
+        Arc::make_mut(sheet.preserved.as_mut().unwrap()).vml.as_mut().unwrap().data = Arc::from(vml.as_bytes());
+        let bytes = write_xlsx(&wb).unwrap();
+        let mut pkg = Package::open(&bytes).unwrap();
+        let drawing = pkg.read_xml("xl/drawings/drawing1.xml").unwrap().unwrap();
+        assert!(drawing.children[0].path(&["sp", "nvSpPr", "cNvPr", "extLst"]).is_none(), "{vml}");
+        let bytes = replace_part(&legacy_control(COMPAT, false), "xl/drawings/vmlDrawing1.vml", Some(vml.as_bytes()));
+        let (wb, report) = read_xlsx(&bytes).unwrap();
+        assert!(wb.sheet(0).unwrap().shapes[0].info.compat_spid.is_none());
+        assert!(report.warnings.iter().any(|w| w.contains("Legacy button") && w.contains("compatibility link removed")));
+    }
+}
+
+#[test]
+fn copied_objects_cannot_share_one_legacy_association() {
+    let (mut wb, _) = read_xlsx(&legacy_control(COMPAT, false)).unwrap();
+    let sheet = wb.sheet_mut(0).unwrap();
+    let copy = Shape { id: 99, ..sheet.shapes[0].clone() };
+    sheet.shapes.push(copy);
+    let bytes = write_xlsx(&wb).unwrap();
+    let mut pkg = Package::open(&bytes).unwrap();
+    let drawing = pkg.read_xml("xl/drawings/drawing1.xml").unwrap().unwrap();
+    let mut props = vec![];
+    properties(&drawing, &mut props);
+    assert_eq!(props.len(), 2);
+    assert_eq!(props[0].path(&["extLst", "ext", "compatExt"]).unwrap().attr("spid"), Some("_x0000_s1025"));
+    assert!(props[1].child("extLst").is_none());
 }

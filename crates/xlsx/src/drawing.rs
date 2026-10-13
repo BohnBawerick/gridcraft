@@ -385,13 +385,13 @@ fn macro_attr(info: &DrawingInfo) -> String {
     format!(" macro=\"{}\"", esc_attr(info.macro_name.as_deref().unwrap_or("")))
 }
 
-fn cnvpr(info: &DrawingInfo, id: u32, default_name: &str, descr: Option<&str>) -> String {
+fn cnvpr(info: &DrawingInfo, id: u32, default_name: &str, descr: Option<&str>, compat_spid: Option<&str>) -> String {
     let name = info.name.as_deref().unwrap_or(default_name);
     let mut xml = format!("<xdr:cNvPr id=\"{id}\" name=\"{}\"{}", esc_attr(name), if info.hidden { " hidden=\"1\"" } else { "" });
     if let Some(descr) = descr {
         let _ = write!(xml, " descr=\"{}\"", esc_attr(descr));
     }
-    if let Some(spid) = &info.compat_spid {
+    if let Some(spid) = compat_spid {
         let _ = write!(
             xml,
             "><a:extLst><a:ext uri=\"{{{COMPAT_EXT_URI}}}\"><a14:compatExt xmlns:a14=\"http://schemas.microsoft.com/office/drawing/2010/main\" spid=\"{}\"/></a:ext></a:extLst></xdr:cNvPr>",
@@ -403,9 +403,62 @@ fn cnvpr(info: &DrawingInfo, id: u32, default_name: &str, descr: Option<&str>) -
     xml
 }
 
+fn kept_compat_spids(sheet: &Sheet) -> std::collections::HashSet<String> {
+    let Some(vml) = sheet.preserved.as_ref().and_then(|p| p.vml.as_ref()) else { return Default::default() };
+    let note_ids = if sheet.comments.is_empty() {
+        None
+    } else {
+        let Ok(text) = std::str::from_utf8(&vml.data) else { return Default::default() };
+        let Some((_, block)) = crate::passthrough::vml_note_layout(text) else { return Default::default() };
+        let base = block.saturating_mul(1024);
+        let count = u64::try_from(sheet.comments.len()).unwrap_or(u64::MAX);
+        Some(base.saturating_add(1)..=base.saturating_add(count))
+    };
+    let Ok(root) = crate::xml::parse(&vml.data) else { return Default::default() };
+    let mut pending = vec![&root];
+    let mut ids = std::collections::HashMap::new();
+    while let Some(el) = pending.pop() {
+        if el.name == "shape"
+            && let Some(id) = el.attr("id")
+        {
+            let note = el.child("ClientData").is_some_and(|c| c.attr("ObjectType") == Some("Note"));
+            ids.entry(id.to_owned()).and_modify(|unique| *unique = false).or_insert(!note);
+        }
+        pending.extend(&el.children);
+    }
+    ids.into_iter()
+        .filter_map(|(id, unique)| {
+            let claimed_by_note = note_ids.as_ref().is_some_and(|range| {
+                id.strip_prefix("_x0000_s").and_then(|n| n.parse::<u64>().ok()).is_some_and(|n| range.contains(&n) && id == format!("_x0000_s{n}"))
+            });
+            (unique && !claimed_by_note).then_some(id)
+        })
+        .collect()
+}
+
+pub(crate) fn retain_compat_links(cx: &mut Ctx<'_>, sheet: &mut Sheet) {
+    let kept = kept_compat_spids(sheet);
+    for info in sheet
+        .images
+        .iter_mut()
+        .map(|o| &mut o.info)
+        .chain(sheet.charts.iter_mut().map(|o| &mut o.info))
+        .chain(sheet.shapes.iter_mut().map(|o| &mut o.info))
+    {
+        if let Some(spid) = &info.compat_spid
+            && !kept.contains(spid)
+        {
+            let name = info.name.clone().unwrap_or_else(|| info.file_id.unwrap_or_default().to_string());
+            cx.warn(format!("drawing object \"{name}\": legacy VML shape \"{spid}\" was not retained; compatibility link removed"));
+            info.compat_spid = None;
+        }
+    }
+}
+
 /// The drawing part for a sheet's objects (relationship ids already assigned), in the stacking
 /// order they had in the file; objects added or copied since go on top.
 pub fn write_drawing(sheet: &Sheet, theme: &Theme, objs: &[Obj<'_>]) -> String {
+    let mut compat_spids = kept_compat_spids(sheet);
     // A copy carries its original's place; only the first holder keeps it, the rest go on top.
     let mut seen = std::collections::HashSet::new();
     let mut objs: Vec<(u32, &Obj<'_>)> = objs.iter().map(|o| (o.info().order.filter(|n| seen.insert(*n)).unwrap_or(u32::MAX), o)).collect();
@@ -419,6 +472,7 @@ pub fn write_drawing(sheet: &Sheet, theme: &Theme, objs: &[Obj<'_>]) -> String {
         let id = ids.get(i).copied().unwrap_or(0);
         let n = i + 1;
         let info = o.info();
+        let compat_spid = info.compat_spid.as_deref().filter(|spid| compat_spids.remove(*spid));
         let close_tag;
         match o {
             Obj::Image(img, rid) => {
@@ -429,7 +483,7 @@ pub fn write_drawing(sheet: &Sheet, theme: &Theme, objs: &[Obj<'_>]) -> String {
                     s,
                     "<xdr:pic{}><xdr:nvPicPr>{}<xdr:cNvPicPr><a:picLocks noChangeAspect=\"1\"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip r:embed=\"{rid}\"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr>{}<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic>",
                     if info.macro_name.is_some() { macro_attr(info) } else { String::new() },
-                    cnvpr(info, id, &format!("Picture {n}"), Some(&img.alt)),
+                    cnvpr(info, id, &format!("Picture {n}"), Some(&img.alt), compat_spid),
                     xfrm(&img.anchor, "a:xfrm")
                 );
             }
@@ -443,10 +497,10 @@ pub fn write_drawing(sheet: &Sheet, theme: &Theme, objs: &[Obj<'_>]) -> String {
                     s,
                     "<mc:AlternateContent xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"><mc:Choice xmlns:{prefix}=\"{ns}\" Requires=\"{prefix}\"><xdr:graphicFrame{}><xdr:nvGraphicFramePr>{}<xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>{}<a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/drawing/2014/chartex\"><cx:chart xmlns:cx=\"http://schemas.microsoft.com/office/drawing/2014/chartex\" r:id=\"{rid}\"/></a:graphicData></a:graphic></xdr:graphicFrame></mc:Choice><mc:Fallback><xdr:sp{} textlink=\"\"><xdr:nvSpPr>{}<xdr:cNvSpPr><a:spLocks noTextEdit=\"1\"/></xdr:cNvSpPr></xdr:nvSpPr><xdr:spPr>{}<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></xdr:spPr><xdr:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang=\"en-US\"/><a:t>This chart type can't be shown by this application.</a:t></a:r></a:p></xdr:txBody></xdr:sp></mc:Fallback></mc:AlternateContent>",
                     macro_attr(info),
-                    cnvpr(info, id, &format!("Chart {n}"), None),
+                    cnvpr(info, id, &format!("Chart {n}"), None, compat_spid),
                     xfrm(&ch.anchor, "xdr:xfrm"),
                     macro_attr(info),
-                    cnvpr(info, id, &format!("Chart {n}"), None),
+                    cnvpr(info, id, &format!("Chart {n}"), None, compat_spid),
                     xfrm(&ch.anchor, "a:xfrm")
                 );
             }
@@ -458,7 +512,7 @@ pub fn write_drawing(sheet: &Sheet, theme: &Theme, objs: &[Obj<'_>]) -> String {
                     s,
                     "<xdr:graphicFrame{}><xdr:nvGraphicFramePr>{}<xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>{}<a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/chart\"><c:chart r:id=\"{rid}\"/></a:graphicData></a:graphic></xdr:graphicFrame>",
                     macro_attr(info),
-                    cnvpr(info, id, &format!("Chart {n}"), None),
+                    cnvpr(info, id, &format!("Chart {n}"), None, compat_spid),
                     xfrm(&ch.anchor, "xdr:xfrm")
                 );
             }
@@ -466,7 +520,7 @@ pub fn write_drawing(sheet: &Sheet, theme: &Theme, objs: &[Obj<'_>]) -> String {
                 let (open, close) = anchor_open(sheet, &sh.anchor);
                 close_tag = close;
                 s.push_str(&open);
-                if let Some(xml) = ink::write(sh, theme, &macro_attr(info), &cnvpr(info, id, &format!("Ink {id}"), None)) {
+                if let Some(xml) = ink::write(sh, theme, &macro_attr(info), &cnvpr(info, id, &format!("Ink {id}"), None, compat_spid)) {
                     s.push_str(&xml);
                     s.push_str("<xdr:clientData/>");
                     s.push_str(close_tag);
@@ -485,7 +539,7 @@ pub fn write_drawing(sheet: &Sheet, theme: &Theme, objs: &[Obj<'_>]) -> String {
                     s,
                     "<xdr:sp{} textlink=\"\"><xdr:nvSpPr>{}<xdr:cNvSpPr{}/></xdr:nvSpPr><xdr:spPr>{}<a:prstGeom prst=\"{prst}\"><a:avLst/></a:prstGeom>",
                     macro_attr(info),
-                    cnvpr(info, id, &format!("Shape {n}"), None),
+                    cnvpr(info, id, &format!("Shape {n}"), None, compat_spid),
                     if tx { " txBox=\"1\"" } else { "" },
                     xfrm(&sh.anchor, "a:xfrm")
                 );

@@ -30,7 +30,9 @@ their VML shape associations; unsupported object extensions produce an import wa
 the object. Both documented compatibility URI spellings are accepted and saved in braced form.
 Drawing-level alternate control wrappers remain unmodelled while their VML and control parts
 pass through. Copying a sheet or transferring a chart clears links to legacy shapes that stay
-with the source sheet. Names and macro bindings are preserved without truncation.
+with the source sheet. Compatibility links are omitted from JSON and written only for unique
+retained VML shapes, excluding notes. Import removes links to discarded backing shapes with a
+warning naming the object. Names and macro bindings are preserved without truncation.
 
 | Format | Excel | GridCraft read | GridCraft write | Fidelity / notes | Tests |
 |---|---|---|---|---|---|
@@ -97,6 +99,7 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | XLSX: compatibility links require retained VML shapes, cannot share IDs or bind to notes, and are excluded from JSON; discarded backing shapes produce named import warnings |
 | 2026-10-13 | minor | XLSX: accept braced and unbraced legacy-wrapper URIs, emit the braced form, and clear VML associations when sheet copies or chart transfers leave their backing content behind |
 | 2026-10-13 | minor | XLSX: preserve VML wrapper associations and full names and macro bindings; retain Arrange edits and destination object ids after chart moves; keep hidden ChartEx fallbacks and objects out of automatic print bounds |
 | 2026-10-13 | minor | XLSX: pictures, charts and shapes keep their names and ids, hidden flags, `macro` bindings and stacking order on save (every object was renamed, hidden ones were shown, a button lost its macro and shapes were stacked above charts); hidden objects are not drawn, printed or clickable |
