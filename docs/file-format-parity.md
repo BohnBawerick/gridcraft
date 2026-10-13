@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (`.xlsm` save keeps the VBA code names of the workbook and its sheets) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (`.xlsm` save keeps the VBA code names of the workbook and its sheets, including valid non-ASCII names) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 > **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** trivial (XLSX chart sheets are kept on save (#727); previously minor: CSV save keeps the separator it was opened with) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Every format Excel opens or saves, with GridCraft's read and write support, fidelity and tests.
@@ -86,7 +86,7 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-13 | minor | `.xlsm`: the workbook and sheet VBA code names (`workbookPr`/`sheetPr` `codeName`) survive save, so Excel keeps each sheet bound to its document module instead of creating empty ones; invalid or duplicate code names are not written |
+| 2026-10-13 | minor | `.xlsm`: the workbook and sheet VBA code names (`workbookPr`/`sheetPr` `codeName`) survive save, including non-ASCII characters permitted by Excel, so Excel keeps each sheet bound to its document module instead of creating empty ones; invalid or duplicate code names are not written |
 | 2026-10-12 | trivial | XLSX chart sheets are kept on save (#727) |
 | 2026-10-12 | trivial | CSV and TSV export is capped at 512 MiB and refuses a larger used range with an error (#528) |
 | 2026-10-12 | minor | `.xls` import reads the calculation settings (CalcMode, CalcIter, CalcCount, CalcDelta, CalcPrecision), so circular models calculate instead of showing `#CIRC!` (#724) |

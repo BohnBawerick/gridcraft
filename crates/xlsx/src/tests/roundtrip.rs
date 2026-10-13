@@ -1194,6 +1194,36 @@ fn vba_code_names_roundtrip() {
     assert_eq!(back.sheet(0).unwrap().code_name.as_deref(), Some("ModuleData"));
 }
 
+#[test]
+fn vba_code_names_follow_excel_character_rules() {
+    for name in ["Data·Sheet", "·Sheet", "表", "\u{301}Data", "١Sheet", "A_09", &"a".repeat(31), &"表".repeat(31), &"😀".repeat(31)] {
+        for workbook_name in [false, true] {
+            let (book_name, sheet_name) = if workbook_name { (name, "ModuleData") } else { ("ThisWorkbook", name) };
+            let bytes = super::minimal(
+                &format!(r#"<sheetPr codeName="{sheet_name}"/><sheetData/>"#),
+                &[],
+                "",
+                &format!(r#"<workbookPr codeName="{book_name}"/>"#),
+            );
+            let (wb, _) = read_xlsx(&bytes).unwrap();
+            assert_eq!(wb.code_name.as_deref(), Some(book_name));
+            assert_eq!(wb.sheet(0).unwrap().code_name.as_deref(), Some(sheet_name));
+
+            for kind in [crate::XlsxKind::Workbook, crate::XlsxKind::MacroWorkbook, crate::XlsxKind::Template, crate::XlsxKind::MacroTemplate] {
+                let saved = crate::write_xlsx_as(&wb, kind).unwrap();
+                let mut pkg = Package::open(&saved).unwrap();
+                let book = pkg.read_xml("xl/workbook.xml").unwrap().unwrap();
+                let sheet = pkg.read_xml("xl/worksheets/sheet1.xml").unwrap().unwrap();
+                assert_eq!(book.child("workbookPr").unwrap().attr("codeName"), Some(book_name));
+                assert_eq!(sheet.child("sheetPr").unwrap().attr("codeName"), Some(sheet_name));
+                let (back, _) = read_xlsx(&saved).unwrap();
+                assert_eq!(back.code_name.as_deref(), Some(book_name));
+                assert_eq!(back.sheet(0).unwrap().code_name.as_deref(), Some(sheet_name));
+            }
+        }
+    }
+}
+
 /// Code names are written only when VBA accepts them and no other module of the workbook already
 /// uses them (VBA names are case-insensitive): a duplicate would stop Excel loading the project.
 #[test]

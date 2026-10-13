@@ -70,11 +70,11 @@ fn table_columns(t: &Table) -> Vec<String> {
         .collect()
 }
 
-/// Whether `name` can be a VBA code name: a letter, then letters, digits and `_`, at most 31
-/// characters.
 pub(crate) fn valid_code_name(name: &str) -> bool {
     let mut chars = name.chars();
-    chars.next().is_some_and(char::is_alphabetic) && chars.all(|c| c.is_alphanumeric() || c == '_') && name.chars().count() <= 31
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || !c.is_ascii())
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || !c.is_ascii())
+        && name.chars().count() <= 31
 }
 
 /// The code name to save for sheet `si`: its own, unless the workbook or an earlier sheet already
