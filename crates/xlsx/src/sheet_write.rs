@@ -80,7 +80,7 @@ pub(crate) fn valid_code_name(name: &str) -> bool {
 /// The code name to save for sheet `si`: its own, unless the workbook or an earlier sheet already
 /// uses it (code names are case-insensitive in VBA); Excel names a sheet saved without one.
 pub(crate) fn sheet_code_name(wb: &Workbook, si: usize) -> Option<&str> {
-    // On export, XLSX import has already reported invalid or conflicting code names.
+    // XLSX and JSON import already report invalid or conflicting code names before export.
     let name = wb.sheets.get(si)?.code_name.as_deref().filter(|n| valid_code_name(n))?;
     let taken = |other: Option<&str>| other.is_some_and(|o| caseless::default_caseless_match_str(o, name));
     let clash = taken(wb.code_name.as_deref().filter(|n| valid_code_name(n)))
