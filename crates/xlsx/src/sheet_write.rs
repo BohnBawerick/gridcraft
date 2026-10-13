@@ -70,6 +70,23 @@ fn table_columns(t: &Table) -> Vec<String> {
         .collect()
 }
 
+/// Whether `name` can be a VBA code name: a letter, then letters, digits and `_`, at most 31
+/// characters.
+pub(crate) fn valid_code_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(char::is_alphabetic) && chars.all(|c| c.is_alphanumeric() || c == '_') && name.chars().count() <= 31
+}
+
+/// The code name to save for sheet `si`: its own, unless the workbook or an earlier sheet already
+/// uses it (code names are case-insensitive in VBA); Excel names a sheet saved without one.
+pub(crate) fn sheet_code_name(wb: &Workbook, si: usize) -> Option<&str> {
+    let name = wb.sheets.get(si)?.code_name.as_deref().filter(|n| valid_code_name(n))?;
+    let key = name.to_lowercase();
+    let taken = |other: Option<&str>| other.is_some_and(|o| o.to_lowercase() == key);
+    let clash = taken(wb.code_name.as_deref()) || wb.sheets.iter().take(si).any(|sh| taken(sh.code_name.as_deref().filter(|n| valid_code_name(n))));
+    (!clash).then_some(name)
+}
+
 pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (String, Rels) {
     let mut rels = Rels::default();
     let Some(sheet) = wb.sheet(si) else { return (String::new(), rels) };
@@ -114,8 +131,13 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
     let mut s = format!("{XML_DECL}<worksheet xmlns=\"{NS_MAIN}\" xmlns:r=\"{NS_REL}\">");
     // sheetPr
     let fit = sheet.print.fit_to.is_some();
-    if sheet.tab_color.is_some() || fit {
-        s.push_str("<sheetPr>");
+    let code_name = sheet_code_name(wb, si);
+    if sheet.tab_color.is_some() || fit || code_name.is_some() {
+        s.push_str("<sheetPr");
+        if let Some(n) = code_name {
+            let _ = write!(s, " codeName=\"{}\"", esc_attr(n));
+        }
+        s.push('>');
         if let Some(c) = &sheet.tab_color {
             let _ = write!(s, "<tabColor {}/>", color_attrs(c));
         }

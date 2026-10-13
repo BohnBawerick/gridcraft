@@ -1164,3 +1164,50 @@ fn doc_props_keep_boundary_whitespace() {
     let (back, _) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
     assert_eq!(back.props, wb.props);
 }
+
+/// A macro-enabled workbook keeps the VBA code names of the workbook and its sheets: Excel binds
+/// each sheet to its document module by code name, so losing them orphans the modules.
+#[test]
+fn vba_code_names_roundtrip() {
+    let bytes = super::minimal(
+        r#"<sheetPr codeName="ModuleData"><tabColor rgb="FF00FF00"/></sheetPr><sheetData/>"#,
+        &[("xl/vbaProject.bin", "opaque")],
+        r#"<Relationship Id="rId9" Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject" Target="vbaProject.bin"/>"#,
+        r#"<workbookPr codeName="ThisWorkbook" date1904="1"/>"#,
+    );
+    let (wb, _) = read_xlsx(&bytes).unwrap();
+    assert_eq!(wb.code_name.as_deref(), Some("ThisWorkbook"));
+    assert_eq!(wb.sheet(0).unwrap().code_name.as_deref(), Some("ModuleData"));
+    assert_eq!(wb.date_system, DateSystem::D1904);
+
+    let saved = write_xlsx(&wb).unwrap();
+    let mut pkg = Package::open(&saved).unwrap();
+    let book = pkg.read_xml("xl/workbook.xml").unwrap().unwrap();
+    let pr = book.child("workbookPr").unwrap();
+    assert_eq!(pr.attr("codeName"), Some("ThisWorkbook"));
+    assert!(pr.flag("date1904", false));
+    let (sheet, _) = sheet1_xml(&saved);
+    assert!(sheet.contains(r#"<sheetPr codeName="ModuleData"><tabColor"#), "{sheet}");
+
+    let (back, _) = read_xlsx(&saved).unwrap();
+    assert_eq!(back.code_name.as_deref(), Some("ThisWorkbook"));
+    assert_eq!(back.sheet(0).unwrap().code_name.as_deref(), Some("ModuleData"));
+}
+
+/// Code names are written only when VBA accepts them and no other module of the workbook already
+/// uses them (VBA names are case-insensitive): a duplicate would stop Excel loading the project.
+#[test]
+fn vba_code_names_are_valid_and_unique_on_save() {
+    let mut wb = Workbook::new();
+    wb.code_name = Some("ThisWorkbook".into());
+    wb.sheets = ["A", "B", "C", "D", "E"].iter().map(|n| Arc::new(Sheet::new(*n))).collect();
+    for (i, code) in [Some("Sheet1"), Some("SHEET1"), Some("thisworkbook"), Some("1st"), Some("Sheet_2")].into_iter().enumerate() {
+        wb.sheet_mut(i).unwrap().code_name = code.map(str::to_string);
+    }
+    let (back, _) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
+    let codes: Vec<Option<&str>> = back.sheets.iter().map(|s| s.code_name.as_deref()).collect();
+    assert_eq!(codes, [Some("Sheet1"), None, None, None, Some("Sheet_2")]);
+    // A workbook without code names writes none.
+    let (xml, _) = sheet1_xml(&write_xlsx(&Workbook::new()).unwrap());
+    assert!(!xml.contains("codeName"), "{xml}");
+}

@@ -65,6 +65,7 @@ pub fn read_sheet(cx: &mut Ctx<'_>, part: &str, name: &str) -> Result<Sheet, IoE
     for e in &root.children {
         match e.name.as_str() {
             "sheetPr" => {
+                sheet.code_name = e.attr("codeName").filter(|n| crate::sheet_write::valid_code_name(n)).map(str::to_string);
                 if let Some(t) = e.child("tabColor") {
                     sheet.tab_color = Some(read_color(t, &cx.palette));
                 }

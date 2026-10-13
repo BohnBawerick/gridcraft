@@ -169,10 +169,11 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
     }
 
     // Workbook properties.
-    if let Some(p) = wb_xml.child("workbookPr")
-        && p.flag("date1904", false)
-    {
-        cx.date_system = DateSystem::D1904;
+    if let Some(p) = wb_xml.child("workbookPr") {
+        if p.flag("date1904", false) {
+            cx.date_system = DateSystem::D1904;
+        }
+        wb.code_name = p.attr("codeName").filter(|n| crate::sheet_write::valid_code_name(n)).map(str::to_string);
     }
     wb.date_system = cx.date_system;
     if let Some(c) = wb_xml.child("calcPr") {
