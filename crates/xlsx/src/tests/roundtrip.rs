@@ -1225,13 +1225,74 @@ fn vba_code_names_follow_excel_character_rules() {
 }
 
 #[test]
+fn vba_code_names_detect_unicode_clashes() {
+    for (first, second, clash) in [
+        ("Σ", "ς", true),
+        ("ς", "Σ", true),
+        ("Σ", "σ", true),
+        ("Dáta·", "DÁTA·", true),
+        ("ß", "SS", true),
+        ("SS", "ẞ", true),
+        ("ſ", "S", true),
+        ("ﬃ", "FFI", true),
+        ("Ꭰ", "ꭰ", true),
+        ("İ", "i\u{307}", true),
+        ("I", "ı", false),
+        ("İ", "i", false),
+        ("é", "e", false),
+    ] {
+        let bytes =
+            super::minimal(&format!(r#"<sheetPr codeName="{second}"/><sheetData/>"#), &[], "", &format!(r#"<workbookPr codeName="{first}"/>"#));
+        let (mut wb, report) = read_xlsx(&bytes).unwrap();
+        let warnings: Vec<&str> = report.warnings.iter().map(String::as_str).filter(|w| w.contains("VBA code name")).collect();
+        if clash {
+            assert_eq!(warnings, [format!("sheet \"Data\": duplicate VBA code name \"{second}\" was dropped")]);
+        } else {
+            assert!(warnings.is_empty(), "{warnings:?}");
+        }
+        let expected = (!clash).then_some(second);
+        assert_eq!(wb.code_name.as_deref(), Some(first));
+        assert_eq!(wb.sheet(0).unwrap().code_name.as_deref(), expected);
+        wb.sheet_mut(0).unwrap().code_name = Some(second.into());
+        let saved = write_xlsx(&wb).unwrap();
+        let mut pkg = Package::open(&saved).unwrap();
+        let sheet = pkg.read_xml("xl/worksheets/sheet1.xml").unwrap().unwrap();
+        assert_eq!(sheet.child("sheetPr").and_then(|p| p.attr("codeName")), expected);
+        let (back, report) = read_xlsx(&saved).unwrap();
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert_eq!(back.code_name.as_deref(), Some(first));
+        assert_eq!(back.sheet(0).unwrap().code_name.as_deref(), expected);
+    }
+}
+
+#[test]
+fn vba_code_names_ignore_invalid_conflicts_on_save() {
+    let mut wb = Workbook::new();
+    wb.code_name = Some("S".repeat(32));
+    wb.sheet_mut(0).unwrap().code_name = wb.code_name.clone();
+    let mut sheet = Sheet::new("Data");
+    let valid_name = "ß".repeat(16);
+    sheet.code_name = Some(valid_name.clone());
+    wb.sheets.push(Arc::new(sheet));
+    let saved = write_xlsx(&wb).unwrap();
+    let mut pkg = Package::open(&saved).unwrap();
+    let sheet = pkg.read_xml("xl/worksheets/sheet2.xml").unwrap().unwrap();
+    assert_eq!(sheet.child("sheetPr").unwrap().attr("codeName"), Some(valid_name.as_str()));
+    let (back, report) = read_xlsx(&saved).unwrap();
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    assert!(back.code_name.is_none());
+    assert!(back.sheet(0).unwrap().code_name.is_none());
+    assert_eq!(back.sheet(1).unwrap().code_name.as_deref(), Some(valid_name.as_str()));
+}
+
+#[test]
 fn vba_code_names_are_valid_and_unique_on_save() {
     let mut book =
         format!(r#"<workbook xmlns="{}" xmlns:r="{}"><workbookPr codeName="ThisWorkbook"/><sheets>"#, crate::write::NS_MAIN, crate::write::NS_REL,);
     let mut rels = String::from(r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#);
     let mut parts = Vec::new();
     for (i, (name, code)) in
-        [("A", "Sheet1"), ("B", "SHEET1"), ("C", "thisworkbook"), ("D", "1st"), ("E", "Sheet_2"), ("F", "sheet1"), ("G", "Dáta·"), ("H", "DÁTA·")]
+        [("A", "Sheet1"), ("B", "SHEET1"), ("C", "thisworkbook"), ("D", "1st"), ("E", "Sheet_2"), ("F", "sheet1"), ("G", "Σ"), ("H", "ς")]
             .into_iter()
             .enumerate()
     {
@@ -1260,11 +1321,11 @@ fn vba_code_names_are_valid_and_unique_on_save() {
         r#"sheet "C": duplicate VBA code name "thisworkbook" was dropped"#,
         r#"sheet "D": invalid VBA code name "1st" was dropped"#,
         r#"sheet "F": duplicate VBA code name "sheet1" was dropped"#,
-        r#"sheet "H": duplicate VBA code name "DÁTA·" was dropped"#,
+        r#"sheet "H": duplicate VBA code name "ς" was dropped"#,
     ] {
         assert!(warnings.contains(&warning), "{warnings:?}");
     }
-    let expected = [Some("Sheet1"), None, None, None, Some("Sheet_2"), None, Some("Dáta·"), None];
+    let expected = [Some("Sheet1"), None, None, None, Some("Sheet_2"), None, Some("Σ"), None];
     assert_eq!(wb.code_name.as_deref(), Some("ThisWorkbook"));
     assert_eq!(wb.sheets.iter().map(|s| s.code_name.as_deref()).collect::<Vec<_>>(), expected);
     let (back, report) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();

@@ -82,9 +82,9 @@ pub(crate) fn valid_code_name(name: &str) -> bool {
 pub(crate) fn sheet_code_name(wb: &Workbook, si: usize) -> Option<&str> {
     // On export, XLSX import has already reported invalid or conflicting code names.
     let name = wb.sheets.get(si)?.code_name.as_deref().filter(|n| valid_code_name(n))?;
-    let key = name.to_lowercase();
-    let taken = |other: Option<&str>| other.is_some_and(|o| o.to_lowercase() == key);
-    let clash = taken(wb.code_name.as_deref()) || wb.sheets.iter().take(si).any(|sh| taken(sh.code_name.as_deref().filter(|n| valid_code_name(n))));
+    let taken = |other: Option<&str>| other.is_some_and(|o| caseless::default_caseless_match_str(o, name));
+    let clash = taken(wb.code_name.as_deref().filter(|n| valid_code_name(n)))
+        || wb.sheets.iter().take(si).any(|sh| taken(sh.code_name.as_deref().filter(|n| valid_code_name(n))));
     (!clash).then_some(name)
 }
 

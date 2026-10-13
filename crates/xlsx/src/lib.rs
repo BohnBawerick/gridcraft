@@ -51,6 +51,8 @@ pub use passthrough::rebase_links;
 pub use xls::read_xls;
 pub use xlsb::read_xlsb;
 
+pub const VBA_PRESERVED_NOTICE: &str = "macros (VBA project) were kept but not executed";
+
 /// Errors from reading or writing files.
 #[derive(Debug, thiserror::Error)]
 pub enum IoError {

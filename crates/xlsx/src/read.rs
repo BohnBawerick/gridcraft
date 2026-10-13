@@ -334,7 +334,7 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
         match cx.pkg.read(&r.target) {
             Ok(Some(data)) => {
                 wb.vba_project = Some(data);
-                cx.warn("macros (VBA project) were kept but not executed");
+                cx.warn(crate::VBA_PRESERVED_NOTICE);
             }
             Ok(None) => cx.warn("macros (VBA project) reference a missing part and were dropped"),
             Err(IoError::TooLarge(m)) => return Err(IoError::TooLarge(m)),

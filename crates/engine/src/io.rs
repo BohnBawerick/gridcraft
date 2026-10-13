@@ -7,6 +7,8 @@ use gridcraft_model::{Sheet, Workbook};
 
 use crate::{EngineError, Result};
 
+pub use gridcraft_xlsx::VBA_PRESERVED_NOTICE;
+
 /// File formats GridCraft reads or writes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileKind {
@@ -507,7 +509,7 @@ mod tests {
     fn json_import_repairs_vba_code_names() {
         let mut source = Workbook::new();
         source.code_name = Some("ThisWorkbook".into());
-        source.sheets = [("A", "Sheet1"), ("B", "SHEET1"), ("C", "thisworkbook"), ("D", "1st"), ("E", "Dáta·"), ("F", "DÁTA·")]
+        source.sheets = [("A", "Sheet1"), ("B", "SHEET1"), ("C", "thisworkbook"), ("D", "1st"), ("E", "Σ"), ("F", "ς")]
             .into_iter()
             .map(|(name, code)| {
                 let mut sheet = Sheet::new(name);
@@ -524,10 +526,10 @@ mod tests {
                     r#"sheet "B": duplicate VBA code name "SHEET1" was dropped"#,
                     r#"sheet "C": duplicate VBA code name "thisworkbook" was dropped"#,
                     r#"sheet "D": invalid VBA code name "1st" was dropped"#,
-                    r#"sheet "F": duplicate VBA code name "DÁTA·" was dropped"#,
+                    r#"sheet "F": duplicate VBA code name "ς" was dropped"#,
                 ]
             );
-            let expected = [Some("Sheet1"), None, None, None, Some("Dáta·"), None];
+            let expected = [Some("Sheet1"), None, None, None, Some("Σ"), None];
             assert_eq!(wb.code_name.as_deref(), Some("ThisWorkbook"));
             assert_eq!(wb.sheets.iter().map(|s| s.code_name.as_deref()).collect::<Vec<_>>(), expected);
             for output in ["book.json", "book.xlsx", "book.xlsm"] {

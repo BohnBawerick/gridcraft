@@ -798,8 +798,7 @@ impl SheetApp {
             self.notice = None;
             return;
         }
-        let vba: Vec<&str> = msgs.iter().copied().filter(|m| m.to_lowercase().contains("macro") || m.contains("VBA")).collect();
-        if !vba.is_empty() {
+        if msgs.contains(&gridcraft_engine::io::VBA_PRESERVED_NOTICE) {
             self.notice = Some(Notice {
                 text: "This workbook contains VBA macros. GridCraft keeps them intact when you save, but does not run them.".into(),
                 kind: NoticeKind::Warning,
