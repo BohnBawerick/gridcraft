@@ -77,6 +77,23 @@ impl ReadReport {
             self.warnings.push(m);
         }
     }
+
+    pub fn repair_code_names(&mut self, wb: &mut Workbook) {
+        if wb.code_name.as_deref().is_some_and(|n| !sheet_write::valid_code_name(n))
+            && let Some(code_name) = wb.code_name.take()
+        {
+            self.warn(format!("workbook: invalid VBA code name \"{code_name}\" was dropped"));
+        }
+        for si in 0..wb.sheets.len() {
+            if sheet_write::sheet_code_name(wb, si).is_none()
+                && let Some(sheet) = wb.sheet_mut(si)
+                && let Some(code_name) = sheet.code_name.take()
+            {
+                let reason = if sheet_write::valid_code_name(&code_name) { "duplicate" } else { "invalid" };
+                self.warn(format!("sheet \"{}\": {reason} VBA code name \"{code_name}\" was dropped", sheet.name));
+            }
+        }
+    }
 }
 
 /// Reads an `.xlsx` / `.xlsm` / `.xltx` / `.xltm` package (the workbook part is found through the

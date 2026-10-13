@@ -148,9 +148,12 @@ fn open_plain(name: &str, bytes: &[u8]) -> Result<(Workbook, Vec<String>)> {
             let mut wb: Workbook = serde_json::from_slice(bytes).map_err(|e| EngineError::Other(format!("not a GridCraft JSON workbook: {e}")))?;
             wb.styles.rebuild_index();
             if wb.sheets.is_empty() {
-                wb = Workbook::new();
+                wb.sheets.push(std::sync::Arc::new(Sheet::new("Sheet1")));
+                wb.active_sheet = 0;
             }
-            Ok((wb, vec![]))
+            let mut report = gridcraft_xlsx::ReadReport::default();
+            report.repair_code_names(&mut wb);
+            Ok((wb, report.warnings))
         }
         Some(FileKind::Tsv) => {
             let opts = gridcraft_xlsx::CsvOptions { delimiter: b'\t', ..Default::default() };
@@ -499,6 +502,91 @@ pub fn image_size(data: &[u8]) -> Option<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn json_import_repairs_vba_code_names() {
+        let mut source = Workbook::new();
+        source.code_name = Some("ThisWorkbook".into());
+        source.sheets = [("A", "Sheet1"), ("B", "SHEET1"), ("C", "thisworkbook"), ("D", "1st"), ("E", "Dáta·"), ("F", "DÁTA·")]
+            .into_iter()
+            .map(|(name, code)| {
+                let mut sheet = Sheet::new(name);
+                sheet.code_name = Some(code.into());
+                std::sync::Arc::new(sheet)
+            })
+            .collect();
+        let bytes = save_bytes(&source, "book.json").unwrap();
+        for name in ["book.json", "book.scjson"] {
+            let (wb, warnings) = open_bytes(name, &bytes).unwrap();
+            assert_eq!(
+                warnings,
+                [
+                    r#"sheet "B": duplicate VBA code name "SHEET1" was dropped"#,
+                    r#"sheet "C": duplicate VBA code name "thisworkbook" was dropped"#,
+                    r#"sheet "D": invalid VBA code name "1st" was dropped"#,
+                    r#"sheet "F": duplicate VBA code name "DÁTA·" was dropped"#,
+                ]
+            );
+            let expected = [Some("Sheet1"), None, None, None, Some("Dáta·"), None];
+            assert_eq!(wb.code_name.as_deref(), Some("ThisWorkbook"));
+            assert_eq!(wb.sheets.iter().map(|s| s.code_name.as_deref()).collect::<Vec<_>>(), expected);
+            for output in ["book.json", "book.xlsx", "book.xlsm"] {
+                let (back, warnings) = open_bytes(output, &save_bytes(&wb, output).unwrap()).unwrap();
+                assert_eq!(back.code_name, wb.code_name);
+                assert_eq!(back.sheets.iter().map(|s| s.code_name.as_deref()).collect::<Vec<_>>(), expected);
+                assert!(warnings.is_empty(), "{warnings:?}");
+            }
+            let mut session = crate::Session::new();
+            let opened = session.execute("file.open", serde_json::json!({"name": name, "base64": base64_encode(&bytes)})).unwrap();
+            assert_eq!(opened["warnings"], serde_json::json!(warnings));
+        }
+    }
+
+    #[test]
+    fn json_import_reports_invalid_vba_code_names() {
+        for code in ["", "1st", "_Sheet", "Bad Name", "Bad\"Name", &"表".repeat(32)] {
+            let mut source = Workbook::new();
+            source.code_name = Some(code.to_string());
+            source.sheet_mut(0).unwrap().code_name = Some(code.to_string());
+            let (wb, warnings) = open_bytes("book.json", &save_bytes(&source, "book.json").unwrap()).unwrap();
+            assert_eq!(
+                warnings,
+                [
+                    format!("workbook: invalid VBA code name \"{code}\" was dropped"),
+                    format!("sheet \"Sheet1\": invalid VBA code name \"{code}\" was dropped"),
+                ]
+            );
+            assert!(wb.code_name.is_none());
+            assert!(wb.sheet(0).unwrap().code_name.is_none());
+            let (back, warnings) = open_bytes("book.xlsm", &save_bytes(&wb, "book.xlsm").unwrap()).unwrap();
+            assert!(back.code_name.is_none());
+            assert!(back.sheet(0).unwrap().code_name.is_none());
+            assert!(warnings.is_empty(), "{warnings:?}");
+        }
+    }
+
+    #[test]
+    fn json_import_checks_vba_code_names_without_sheets() {
+        for code in [None, Some("ThisWorkbook"), Some("Bad.Name")] {
+            let mut source = Workbook::new();
+            source.code_name = code.map(str::to_string);
+            source.sheets.clear();
+            source.active_sheet = 3;
+            let (wb, warnings) = open_bytes("book.json", &save_bytes(&source, "book.json").unwrap()).unwrap();
+            if code == Some("Bad.Name") {
+                assert!(wb.code_name.is_none());
+                assert_eq!(warnings, [r#"workbook: invalid VBA code name "Bad.Name" was dropped"#]);
+            } else {
+                assert_eq!(wb.code_name.as_deref(), code);
+                assert!(warnings.is_empty(), "{warnings:?}");
+            }
+            assert_eq!(wb.sheets.len(), 1);
+            assert_eq!(wb.active_sheet, 0);
+            let (back, warnings) = open_bytes("book.xlsm", &save_bytes(&wb, "book.xlsm").unwrap()).unwrap();
+            assert_eq!(back.code_name, wb.code_name);
+            assert!(warnings.is_empty(), "{warnings:?}");
+        }
+    }
 
     #[test]
     fn html_export_fails_instead_of_dropping_cells_past_the_row_limit() {

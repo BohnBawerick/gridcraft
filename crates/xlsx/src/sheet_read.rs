@@ -65,14 +65,7 @@ pub fn read_sheet(cx: &mut Ctx<'_>, part: &str, name: &str) -> Result<Sheet, IoE
     for e in &root.children {
         match e.name.as_str() {
             "sheetPr" => {
-                sheet.code_name = e.attr("codeName").and_then(|n| {
-                    if crate::sheet_write::valid_code_name(n) {
-                        Some(n.to_string())
-                    } else {
-                        cx.warn(format!("sheet \"{name}\": invalid VBA code name \"{n}\" was dropped"));
-                        None
-                    }
-                });
+                sheet.code_name = e.attr("codeName").map(str::to_string);
                 if let Some(t) = e.child("tabColor") {
                     sheet.tab_color = Some(read_color(t, &cx.palette));
                 }
