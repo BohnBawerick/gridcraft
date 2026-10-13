@@ -449,10 +449,6 @@ fn sample() -> Workbook {
         hidden: false,
     });
     wb.cell_styles.push(("Good".into(), red));
-    wb.styles.resolve_theme_fonts(&wb.theme);
-    for (_, style) in &mut wb.cell_styles {
-        style.font.resolve_theme(&wb.theme);
-    }
     wb
 }
 
@@ -471,6 +467,8 @@ fn full_roundtrip() {
     assert!(back.structure_password.as_ref().unwrap().verify("s3cret").unwrap());
     assert_eq!(back.props, wb.props);
     assert_eq!(back.theme, wb.theme);
+    let default_font = &back.styles.get(StyleId::DEFAULT).font;
+    assert_eq!((default_font.name.as_str(), default_font.scheme), ("Aptos", FontScheme::Minor));
     assert_eq!(back.names, wb.names);
     assert_eq!(back.cell_styles.len(), 1);
     assert_eq!(back.sheets.len(), 3);
@@ -487,7 +485,9 @@ fn full_roundtrip() {
         let got = b.cell(c).unwrap_or_else(|| panic!("missing {c}"));
         assert_eq!(got.value, cell.value, "value at {c}");
         assert_eq!(got.formula.as_ref().map(|f| (&f.text, f.array)), cell.formula.as_ref().map(|f| (&f.text, f.array)), "formula at {c}");
-        assert_eq!(back.styles.get(got.style), wb.styles.get(cell.style), "style at {c}");
+        let mut expected = wb.styles.get(cell.style).clone();
+        expected.font.resolve_theme(&wb.theme);
+        assert_eq!(back.styles.get(got.style), &expected, "style at {c}");
     }
     for (c, _) in b.cells.iter() {
         assert!(a.cell(c).is_some() || skip.contains(&c) || a.tables.iter().any(|t| t.range.contains(c)), "extra {c}");

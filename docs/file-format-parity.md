@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (theme changes and Format Cells preserve font schemes, and hidden `_FilterDatabase` names are kept on save) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (saving preserves theme font schemes even when cached faces are stale, and hidden `_FilterDatabase` names are kept) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Every format Excel opens or saves, with GridCraft's read and write support, fidelity and tests.
 Part of [target-app-parity.md](target-app-parity.md). **File formats: ~50% ready, 80–120 h**
@@ -25,7 +25,9 @@ theme's body or heading face, an explicit font in the same face stays explicit, 
 by name makes it explicit. Changing theme fonts updates the default, cell and named styles while
 retaining their schemes. Format Cells keeps a theme link for unrelated edits and clears it when
 a face is selected, including a selection of the current face. Full JSON styles retain an explicit
-`None` scheme. Engine and dialog tests cover these edits through XLSX save and reopen.
+`None` scheme. Saving uses the current theme face for every Minor or Major font, even when format
+painter, paste or a PivotTable has supplied an older cached face. Engine, writer and dialog tests
+cover font schemes through XLSX save and reopen.
 The hidden `_xlnm._FilterDatabase` names are kept: a sheet with an
 AutoFilter writes its filter range, and a sheet without one keeps the name it was opened with
 (`fonts_and_filter_names.rs`). Column widths are still stored at a 7-pixel digit width, so a width
@@ -96,7 +98,7 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-13 | minor | XLSX: theme font links survive theme changes; named font choices and full Format Cells payloads remain explicit; hidden `_xlnm._FilterDatabase` names are kept |
+| 2026-10-13 | minor | XLSX: theme font links survive theme changes and stale cached faces from format painter or paste; named font choices and full Format Cells payloads remain explicit; hidden `_xlnm._FilterDatabase` names are kept |
 | 2026-10-12 | trivial | XLSX chart sheets are kept on save (#727) |
 | 2026-10-12 | trivial | CSV and TSV export is capped at 512 MiB and refuses a larger used range with an error (#528) |
 | 2026-10-12 | minor | `.xls` import reads the calculation settings (CalcMode, CalcIter, CalcCount, CalcDelta, CalcPrecision), so circular models calculate instead of showing `#CIRC!` (#724) |

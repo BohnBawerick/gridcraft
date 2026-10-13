@@ -1,7 +1,7 @@
 //! Theme-following fonts and the hidden `_FilterDatabase` names survive save.
 
 use gridcraft_core::{CellRef, RangeRef};
-use gridcraft_model::{AutoFilter, FontScheme};
+use gridcraft_model::{AutoFilter, FontScheme, Style, StyleId, StyleTable, Workbook};
 
 use super::minimal;
 use crate::package::Package;
@@ -60,6 +60,63 @@ fn theme_fonts_stay_theme_fonts_and_explicit_fonts_stay_explicit() {
     let b = back.sheet(0).unwrap();
     for a in ["A1", "B1", "C1"] {
         assert_eq!(back.styles.get(b.cell(at(a)).unwrap().style).font, font(a), "{a}");
+    }
+}
+
+#[test]
+fn theme_font_writer_uses_schemes_even_when_cached_faces_are_stale() {
+    let cases = [
+        (FontScheme::Minor, "Old Body", "Body Face"),
+        (FontScheme::Major, "Old Heading", "Heading Face"),
+        (FontScheme::None, "Explicit Face", "Explicit Face"),
+        (FontScheme::None, "Body Face", "Body Face"),
+    ];
+    for (default_scheme, default_face) in [(FontScheme::Minor, "Body Face"), (FontScheme::Major, "Heading Face"), (FontScheme::None, "Old Default")] {
+        let mut wb = Workbook::new();
+        wb.theme.minor_font = "Body Face".into();
+        wb.theme.major_font = "Heading Face".into();
+        let mut normal = Style::default();
+        normal.font.name = "Old Default".into();
+        normal.font.scheme = default_scheme;
+        wb.styles = StyleTable::with_default(normal);
+        for (i, (scheme, cached, _)) in cases.iter().enumerate() {
+            let mut style = Style::default();
+            style.font.name = (*cached).into();
+            style.font.scheme = *scheme;
+            let id = wb.styles.intern(style.clone());
+            let sheet = wb.sheet_mut(0).unwrap();
+            sheet.set_style(CellRef::new(0, i as u32), id);
+            sheet.rows.entry(20 + i as u32).or_default().style = Some(id);
+            sheet.cols.entry(10 + i as u32).or_default().style = Some(id);
+            style.font.italic = true;
+            wb.cell_styles.push((format!("Named {i}"), style));
+        }
+        for kind in [crate::XlsxKind::Workbook, crate::XlsxKind::MacroWorkbook] {
+            let saved = crate::write_xlsx_as(&wb, kind).unwrap();
+            let fonts = saved_fonts(&saved);
+            for (name, scheme) in &fonts {
+                match scheme.as_deref() {
+                    Some("minor") => assert_eq!(name, "Body Face"),
+                    Some("major") => assert_eq!(name, "Heading Face"),
+                    None => assert!(["Explicit Face", "Body Face", "Old Default"].contains(&name.as_str())),
+                    other => panic!("unexpected font scheme {other:?}"),
+                }
+            }
+            assert!(fonts.contains(&("Body Face".into(), Some("minor".into()))));
+            assert!(fonts.contains(&("Heading Face".into(), Some("major".into()))));
+            let (back, _) = read_xlsx(&saved).unwrap();
+            let normal = &back.styles.get(StyleId::DEFAULT).font;
+            assert_eq!((normal.name.as_str(), normal.scheme), (default_face, default_scheme));
+            let sheet = back.sheet(0).unwrap();
+            for (i, (scheme, _, face)) in cases.iter().enumerate() {
+                for cell in [CellRef::new(0, i as u32), CellRef::new(20 + i as u32, 0), CellRef::new(0, 10 + i as u32)] {
+                    let font = &back.styles.get(sheet.style_id(cell)).font;
+                    assert_eq!((font.name.as_str(), font.scheme), (*face, *scheme));
+                }
+                let named = &back.cell_styles.iter().find(|(name, _)| name == &format!("Named {i}")).unwrap().1.font;
+                assert_eq!((named.name.as_str(), named.scheme, named.italic), (*face, *scheme, true));
+            }
+        }
     }
 }
 

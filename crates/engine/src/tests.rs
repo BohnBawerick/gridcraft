@@ -1507,6 +1507,38 @@ fn font_scheme_theme_changes_update_all_styles_and_survive_save() {
 }
 
 #[test]
+fn font_scheme_survives_saving_painted_and_pasted_formats() {
+    for transfer in ["painter", "paste", "formats"] {
+        let mut s = s();
+        s.execute("range.setValues", json!({"range": "A1", "values": [["Body", "Heading", "Explicit"]]})).unwrap();
+        s.execute("home.cellStyle", json!({"range": "B1", "name": "Title"})).unwrap();
+        s.execute("home.fontName", json!({"range": "C1", "name": "Calibri"})).unwrap();
+        s.execute("selection.set", json!({"range": "A1:C1"})).unwrap();
+        if transfer == "painter" {
+            s.execute("edit.formatPainter", json!({})).unwrap();
+        } else {
+            s.execute("edit.copy", json!({})).unwrap();
+            s.execute("file.new", json!({})).unwrap();
+        }
+        s.execute("pageLayout.theme", json!({"minorFont": "Arial", "majorFont": "Cambria"})).unwrap();
+        match transfer {
+            "painter" => s.execute("edit.formatPainter", json!({"apply": "A3"})).unwrap(),
+            "paste" => s.execute("edit.paste", json!({"at": "A3"})).unwrap(),
+            _ => s.execute("edit.pasteSpecial", json!({"at": "A3", "what": "formats"})).unwrap(),
+        };
+        for (body, heading) in [("Arial", "Cambria"), ("Verdana", "Georgia")] {
+            reopen(&mut s);
+            for (cell, face, scheme) in [("A3", body, "Minor"), ("B3", heading, "Major"), ("C3", "Calibri", "None")] {
+                let font = s.execute("cell.get", json!({"cell": cell})).unwrap()["style"]["font"].clone();
+                assert_eq!(font["name"], face, "{transfer} {cell}");
+                assert_eq!(font["scheme"], scheme, "{transfer} {cell}");
+            }
+            s.execute("pageLayout.theme", json!({"minorFont": "Verdana", "majorFont": "Georgia"})).unwrap();
+        }
+    }
+}
+
+#[test]
 fn font_scheme_format_cells_distinguishes_face_choices_and_style_payloads() {
     use gridcraft_model::{FontScheme, Style};
 

@@ -6,8 +6,8 @@ use std::fmt::Write as _;
 
 use gridcraft_model::style::Protection;
 use gridcraft_model::{
-    Alignment, BorderLine, BorderStyle, Borders, Color, Fill, Font, FontScheme, HAlign, NumFmt, PatternType, Style, Underline, VAlign, VertAlign,
-    Workbook,
+    Alignment, BorderLine, BorderStyle, Borders, Color, Fill, Font, FontScheme, HAlign, NumFmt, PatternType, Style, Theme, Underline, VAlign,
+    VertAlign, Workbook,
 };
 
 use crate::tables::{INDEXED, builtin_format, builtin_id};
@@ -402,8 +402,7 @@ pub fn color_attrs(c: &Color) -> String {
     }
 }
 
-/// `scheme`: the theme font the font follows (`<scheme val="minor"/>`).
-fn font_xml(f: &Font, dxf: bool, scheme: FontScheme) -> String {
+fn font_xml(f: &Font, dxf: bool, theme: &Theme) -> String {
     let mut s = String::from("<font>");
     if f.bold {
         s.push_str("<b/>");
@@ -435,8 +434,13 @@ fn font_xml(f: &Font, dxf: bool, scheme: FontScheme) -> String {
         s.push_str("<color theme=\"1\"/>");
     }
     if !dxf {
-        let _ = write!(s, "<name val=\"{}\"/><family val=\"2\"/>", esc_attr(&f.name));
-        match scheme {
+        let name = match f.scheme {
+            FontScheme::Minor => &theme.minor_font,
+            FontScheme::Major => &theme.major_font,
+            FontScheme::None => &f.name,
+        };
+        let _ = write!(s, "<name val=\"{}\"/><family val=\"2\"/>", esc_attr(name));
+        match f.scheme {
             FontScheme::None => {}
             FontScheme::Minor => s.push_str("<scheme val=\"minor\"/>"),
             FontScheme::Major => s.push_str("<scheme val=\"major\"/>"),
@@ -679,7 +683,7 @@ pub fn write_styles(wb: &Workbook, dxfs: &[Style], extra_fmts: &[String]) -> (St
             || d.font.color != Color::Auto
             || d.font.vert != VertAlign::Baseline
         {
-            dx.push_str(&font_xml(&d.font, true, FontScheme::None));
+            dx.push_str(&font_xml(&d.font, true, &wb.theme));
         }
         if d.num_fmt != def.num_fmt {
             let id = nf.id(d.num_fmt.as_str());
@@ -712,14 +716,7 @@ pub fn write_styles(wb: &Workbook, dxfs: &[Style], extra_fmts: &[String]) -> (St
     }
     let _ = write!(s, "<fonts count=\"{}\">", fonts.len());
     for f in &fonts {
-        // A font follows the theme in the file only while it shows the theme's face, so Excel
-        // shows the face GridCraft shows.
-        let scheme = match f.scheme {
-            FontScheme::Minor if f.name == wb.theme.minor_font => FontScheme::Minor,
-            FontScheme::Major if f.name == wb.theme.major_font => FontScheme::Major,
-            _ => FontScheme::None,
-        };
-        s.push_str(&font_xml(f, false, scheme));
+        s.push_str(&font_xml(f, false, &wb.theme));
     }
     let _ = write!(s, "</fonts><fills count=\"{}\">", fills.len());
     for f in &fills {
