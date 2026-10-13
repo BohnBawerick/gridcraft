@@ -48,6 +48,7 @@ fn sample() -> Workbook {
         s.num_fmt = NumFmt::new("0.00%");
         s.font = Font {
             name: "Arial".into(),
+            scheme: FontScheme::None,
             size: 9.5,
             italic: true,
             underline: Underline::SingleAccounting,
@@ -448,6 +449,10 @@ fn sample() -> Workbook {
         hidden: false,
     });
     wb.cell_styles.push(("Good".into(), red));
+    wb.styles.resolve_theme_fonts(&wb.theme);
+    for (_, style) in &mut wb.cell_styles {
+        style.font.resolve_theme(&wb.theme);
+    }
     wb
 }
 
@@ -482,13 +487,7 @@ fn full_roundtrip() {
         let got = b.cell(c).unwrap_or_else(|| panic!("missing {c}"));
         assert_eq!(got.value, cell.value, "value at {c}");
         assert_eq!(got.formula.as_ref().map(|f| (&f.text, f.array)), cell.formula.as_ref().map(|f| (&f.text, f.array)), "formula at {c}");
-        // The sample's theme body font is not the default face, so its default fonts are saved as
-        // the face they show, no longer following the theme.
-        let mut want = wb.styles.get(cell.style).clone();
-        if want.font.scheme == FontScheme::Minor && want.font.name != wb.theme.minor_font {
-            want.font.scheme = FontScheme::None;
-        }
-        assert_eq!(back.styles.get(got.style), &want, "style at {c}");
+        assert_eq!(back.styles.get(got.style), wb.styles.get(cell.style), "style at {c}");
     }
     for (c, _) in b.cells.iter() {
         assert!(a.cell(c).is_some() || skip.contains(&c) || a.tables.iter().any(|t| t.range.contains(c)), "extra {c}");

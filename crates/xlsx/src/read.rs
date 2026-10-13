@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use gridcraft_core::{DateSystem, RangeRef};
-use gridcraft_model::{CalcMode, CellPicture, DefinedName, FontScheme, Sheet, Style, StyleId, StyleTable, Visibility, Workbook};
+use gridcraft_model::{CalcMode, CellPicture, DefinedName, Sheet, Style, StyleId, StyleTable, Visibility, Workbook};
 
 use crate::package::{Package, Rel};
 use crate::styles::{StylesIn, read_styles};
@@ -129,11 +129,7 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
         if let Some(x) = cx.optional_xml(&r.target)? {
             let StylesIn { mut xfs, dxfs, palette, mut named, num_fmts } = read_styles(&x, &checkboxes);
             for st in xfs.iter_mut().chain(named.iter_mut().map(|(_, st)| st)) {
-                match st.font.scheme {
-                    FontScheme::Minor if !wb.theme.minor_font.is_empty() => st.font.name.clone_from(&wb.theme.minor_font),
-                    FontScheme::Major if !wb.theme.major_font.is_empty() => st.font.name.clone_from(&wb.theme.major_font),
-                    _ => {}
-                }
+                st.font.resolve_theme(&wb.theme);
             }
             cx.num_fmts = num_fmts;
             // Cell format 0 is the Normal style: its font is what every unformatted cell shows.

@@ -386,6 +386,9 @@ fn theme(s: &mut Session, p: &Json) -> Result<Json> {
         .ok_or_else(|| bad("pageLayout.theme", format!("unknown theme `{name}`")))?;
     let major = str_param(p, "majorFont").map(str::to_string);
     let minor = str_param(p, "minorFont").map(str::to_string);
+    if major.iter().chain(minor.iter()).any(|font| font.trim().is_empty()) {
+        return Err(bad("pageLayout.theme", "font names must not be blank"));
+    }
     edit(s, |cx| {
         cx.wb.theme.name = name.clone();
         cx.wb.theme.colors = colors;
@@ -394,6 +397,10 @@ fn theme(s: &mut Session, p: &Json) -> Result<Json> {
         }
         if let Some(m) = &minor {
             cx.wb.theme.minor_font = m.clone();
+        }
+        cx.wb.styles.resolve_theme_fonts(&cx.wb.theme);
+        for (_, style) in &mut cx.wb.cell_styles {
+            style.font.resolve_theme(&cx.wb.theme);
         }
         Ok(Json::Null)
     })

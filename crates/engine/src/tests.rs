@@ -1426,6 +1426,145 @@ fn multi_cell_array_formulas_and_tables_dont_overlap() {
 }
 
 #[test]
+fn font_scheme_theme_changes_update_all_styles_and_survive_save() {
+    use gridcraft_model::{FontScheme, Sheet, Style, StyleId, StyleTable, Workbook};
+    use std::sync::Arc;
+
+    let check_fonts = |wb: &Workbook, minor: &str, major: &str| {
+        for style in wb.styles.iter().map(|(_, style)| style).chain(wb.cell_styles.iter().map(|(_, style)| style)) {
+            let face = match style.font.scheme {
+                FontScheme::Minor => minor,
+                FontScheme::Major => major,
+                FontScheme::None => "Calibri",
+            };
+            assert_eq!(style.font.name, face);
+        }
+    };
+
+    for default_scheme in [FontScheme::Minor, FontScheme::Major, FontScheme::None] {
+        let mut s = s();
+        let mut normal = Style::default();
+        normal.font.scheme = default_scheme;
+        Arc::make_mut(&mut s.doc_mut().unwrap().wb).styles = StyleTable::with_default(normal);
+        s.execute("home.cellStyle", json!({"range": "A1", "name": "Good"})).unwrap();
+        s.execute("home.cellStyle", json!({"range": "B1", "name": "Title"})).unwrap();
+        s.execute("home.fontName", json!({"range": "C1", "name": "Calibri"})).unwrap();
+        s.execute("home.cellStyle", json!({"range": "4:4", "name": "Title"})).unwrap();
+        s.execute("home.cellStyle", json!({"range": "E:E", "name": "Good"})).unwrap();
+        {
+            let wb = Arc::make_mut(&mut s.doc_mut().unwrap().wb);
+            let mut second = Sheet::new("Second");
+            for (name, cell) in [("Body", "A1"), ("Heading", "B1"), ("Explicit", "C1")] {
+                let cell = CellRef::parse(cell).unwrap();
+                let id = wb.sheet(0).unwrap().style_id(cell);
+                wb.cell_styles.push((name.into(), wb.styles.get(id).clone()));
+                second.set_style(cell, id);
+            }
+            wb.sheets.push(Arc::new(second));
+        }
+        reopen(&mut s);
+        let before = s.doc().unwrap().wb.clone();
+        for patch in [json!({"minorFont": ""}), json!({"majorFont": "   ", "minorFont": "Arial"})] {
+            assert!(s.execute("pageLayout.theme", patch).is_err());
+            assert_eq!(s.doc().unwrap().wb, before);
+        }
+        s.execute("pageLayout.theme", json!({"minorFont": "Arial", "majorFont": "Cambria"})).unwrap();
+        check_fonts(&s.doc().unwrap().wb, "Arial", "Cambria");
+        let changed = s.doc().unwrap().wb.clone();
+        assert_eq!(changed.sheets, before.sheets);
+        assert_eq!(changed.styles.len(), before.styles.len());
+        assert_eq!(changed.styles.get(StyleId::DEFAULT).font.scheme, default_scheme);
+        for (id, style) in before.styles.iter() {
+            let mut expected = style.clone();
+            expected.font.name = match expected.font.scheme {
+                FontScheme::Minor => "Arial",
+                FontScheme::Major => "Cambria",
+                FontScheme::None => "Calibri",
+            }
+            .into();
+            assert_eq!(changed.styles.get(id), &expected);
+            assert_eq!(changed.styles.clone().intern(expected), id);
+        }
+        s.execute("edit.undo", json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().wb, before);
+        s.execute("edit.redo", json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().wb, changed);
+        reopen(&mut s);
+        check_fonts(&s.doc().unwrap().wb, "Arial", "Cambria");
+        assert_eq!(s.doc().unwrap().wb.cell_styles, changed.cell_styles);
+        for (name, cell) in [("Normal", "A6"), ("Good", "B6"), ("Title", "C6"), ("Body", "D6"), ("Heading", "E6")] {
+            s.execute("home.cellStyle", json!({"range": cell, "name": name})).unwrap();
+        }
+        check_fonts(&s.doc().unwrap().wb, "Arial", "Cambria");
+        s.execute("pageLayout.theme", json!({"minorFont": "Verdana"})).unwrap();
+        check_fonts(&s.doc().unwrap().wb, "Verdana", "Cambria");
+        s.execute("pageLayout.theme", json!({"majorFont": "Georgia"})).unwrap();
+        check_fonts(&s.doc().unwrap().wb, "Verdana", "Georgia");
+        s.execute("pageLayout.theme", json!({"name": "Slate"})).unwrap();
+        reopen(&mut s);
+        check_fonts(&s.doc().unwrap().wb, "Verdana", "Georgia");
+    }
+}
+
+#[test]
+fn font_scheme_format_cells_distinguishes_face_choices_and_style_payloads() {
+    use gridcraft_model::{FontScheme, Style};
+
+    for range in ["A1:B2", "2:2", "B:B"] {
+        for name in ["Calibri", "Courier New"] {
+            for full_style in [false, true] {
+                let mut s = s();
+                s.execute("cell.set", json!({"cell": "B2", "input": "text"})).unwrap();
+                s.execute("home.cellStyle", json!({"range": "B2", "name": "Title"})).unwrap();
+                let mut style = Style::default();
+                style.font.name = name.into();
+                style.font.scheme = FontScheme::None;
+                let patch = if full_style { json!(style) } else { json!({"font": {"name": name}}) };
+                s.execute("home.formatCells", json!({"range": range, "style": patch})).unwrap();
+                for cell in ["A1", "A2", "B1", "B2", "B9", "Z2"] {
+                    let at = CellRef::parse(cell).unwrap();
+                    if !gridcraft_core::RangeRef::parse(range).unwrap().contains(at) {
+                        continue;
+                    }
+                    let font = s.execute("cell.get", json!({"cell": cell})).unwrap()["style"]["font"].clone();
+                    assert_eq!(font["name"], name, "{range} {cell}");
+                    assert_eq!(font["scheme"], "None", "{range} {cell}");
+                }
+                s.execute("edit.undo", json!({})).unwrap();
+                assert_eq!(s.execute("cell.get", json!({"cell": "B2"})).unwrap()["style"]["font"]["scheme"], "Major");
+                s.execute("edit.redo", json!({})).unwrap();
+                s.execute("pageLayout.theme", json!({"minorFont": "Arial", "majorFont": "Cambria"})).unwrap();
+                reopen(&mut s);
+                let font = s.execute("cell.get", json!({"cell": "B2"})).unwrap()["style"]["font"].clone();
+                assert_eq!(font["name"], name);
+                assert_eq!(font["scheme"], "None");
+            }
+        }
+    }
+
+    let mut s = s();
+    s.execute("pageLayout.theme", json!({"minorFont": "Arial", "majorFont": "Cambria"})).unwrap();
+    s.execute("home.formatCells", json!({"range": "A1", "style": {"font": {"bold": true}}})).unwrap();
+    let mut style = s.execute("cell.get", json!({"cell": "A1"})).unwrap()["style"].clone();
+    assert_eq!(style["font"]["scheme"], "Minor");
+    style["font"]["italic"] = json!(true);
+    s.execute("home.formatCells", json!({"range": "A1", "style": style})).unwrap();
+    s.execute("home.formatCells", json!({"range": "B1", "style": {"font": {"scheme": "Major"}}})).unwrap();
+    let before = s.doc().unwrap().wb.clone();
+    assert!(s.execute("home.formatCells", json!({"style": {"font": {"name": 42}}})).is_err());
+    assert_eq!(s.doc().unwrap().wb, before);
+    reopen(&mut s);
+    let body = s.execute("cell.get", json!({"cell": "A1"})).unwrap()["style"]["font"].clone();
+    assert_eq!(body["scheme"], "Minor");
+    assert_eq!(body["name"], "Arial");
+    assert_eq!(body["bold"], true);
+    assert_eq!(body["italic"], true);
+    let heading = s.execute("cell.get", json!({"cell": "B1"})).unwrap()["style"]["font"].clone();
+    assert_eq!(heading["scheme"], "Major");
+    assert_eq!(heading["name"], "Cambria");
+}
+
+#[test]
 fn choosing_a_font_by_name_stops_it_following_the_theme() {
     // A theme font written with a new name would still show the theme's face in Excel.
     let mut s = s();

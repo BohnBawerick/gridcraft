@@ -492,19 +492,26 @@ fn borders(s: &mut Session, p: &Json) -> Result<Json> {
 }
 
 fn format_cells(s: &mut Session, p: &Json) -> Result<Json> {
-    let Some(patch) = p.get("style").cloned() else {
+    let Some(mut patch) = p.get("style").cloned() else {
         // Menu invocation without params: the UI opens the dialog.
         s.ui_requests.push(crate::UiRequest::Dialog("formatCells".into(), json!({})));
         return ok();
     };
+    if let Some(font) = patch.get_mut("font").and_then(Json::as_object_mut)
+        && font.contains_key("name")
+    {
+        font.entry("scheme").or_insert(json!(gridcraft_model::FontScheme::None));
+    }
+    let theme = s.doc()?.wb.theme.clone();
     // Validate by merging into the active style once.
     let base = serde_json::to_value(active_style(s)?).map_err(|e| EngineError::Other(e.to_string()))?;
     let merged = merge_json(base, &patch);
     let _: Style = serde_json::from_value(merged).map_err(|e| bad("home.formatCells", e.to_string()))?;
     apply_style(s, p, |st| {
         if let Ok(cur) = serde_json::to_value(&*st)
-            && let Ok(new) = serde_json::from_value::<Style>(merge_json(cur, &patch))
+            && let Ok(mut new) = serde_json::from_value::<Style>(merge_json(cur, &patch))
         {
+            new.font.resolve_theme(&theme);
             *st = new;
         }
     })
@@ -741,7 +748,6 @@ fn decimals(s: &mut Session, p: &Json, delta: i32) -> Result<Json> {
 
 /// Built-in cell styles (our own palette).
 pub fn builtin_cell_style(name: &str, theme: &Theme) -> Option<Style> {
-    let _ = theme;
     let mut s = Style::default();
     let accent = |i: u8, tint: i16| Color::Theme(i, tint);
     match name {
@@ -802,7 +808,6 @@ pub fn builtin_cell_style(name: &str, theme: &Theme) -> Option<Style> {
         "Title" => {
             s.font.size = 18.0;
             s.font.color = Color::Theme(3, 0);
-            s.font.name = theme.major_font.clone();
             s.font.scheme = gridcraft_model::FontScheme::Major;
         }
         "Heading 1" => {
@@ -858,6 +863,7 @@ pub fn builtin_cell_style(name: &str, theme: &Theme) -> Option<Style> {
             }
         }
     }
+    s.font.resolve_theme(theme);
     Some(s)
 }
 

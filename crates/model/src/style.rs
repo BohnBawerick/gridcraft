@@ -161,12 +161,6 @@ pub enum FontScheme {
     Major,
 }
 
-impl FontScheme {
-    pub fn is_none(&self) -> bool {
-        *self == FontScheme::None
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Font {
     pub name: String,
@@ -178,8 +172,18 @@ pub struct Font {
     pub color: Color,
     pub vert: VertAlign,
     /// Theme font this font follows; `name` then holds that theme font's face.
-    #[serde(default, skip_serializing_if = "FontScheme::is_none")]
+    #[serde(default)]
     pub scheme: FontScheme,
+}
+
+impl Font {
+    pub fn resolve_theme(&mut self, theme: &Theme) {
+        match self.scheme {
+            FontScheme::Minor if !theme.minor_font.is_empty() => self.name.clone_from(&theme.minor_font),
+            FontScheme::Major if !theme.major_font.is_empty() => self.name.clone_from(&theme.major_font),
+            _ => {}
+        }
+    }
 }
 
 impl Eq for Font {}
@@ -434,6 +438,12 @@ impl StyleTable {
     pub fn iter(&self) -> impl Iterator<Item = (StyleId, &Style)> {
         self.styles.iter().enumerate().map(|(i, s)| (StyleId(i as u32), s))
     }
+    pub fn resolve_theme_fonts(&mut self, theme: &Theme) {
+        for style in &mut self.styles {
+            style.font.resolve_theme(theme);
+        }
+        self.rebuild_index();
+    }
     pub fn rebuild_index(&mut self) {
         self.index = self.styles.iter().enumerate().map(|(i, s)| (s.clone(), StyleId(i as u32))).collect();
     }
@@ -444,6 +454,18 @@ static DEFAULT_STYLE: std::sync::LazyLock<Style> = std::sync::LazyLock::new(Styl
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn font_scheme_json_preserves_explicit_and_theme_fonts() {
+        for scheme in [FontScheme::None, FontScheme::Minor, FontScheme::Major] {
+            let font = Font { scheme, ..Font::default() };
+            let mut value = serde_json::to_value(&font).unwrap();
+            assert_eq!(value["scheme"], serde_json::to_value(scheme).unwrap());
+            assert_eq!(serde_json::from_value::<Font>(value.clone()).unwrap(), font);
+            value.as_object_mut().unwrap().remove("scheme");
+            assert_eq!(serde_json::from_value::<Font>(value).unwrap().scheme, FontScheme::None);
+        }
+    }
 
     #[test]
     fn interning() {
