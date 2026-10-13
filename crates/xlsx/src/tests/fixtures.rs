@@ -81,7 +81,10 @@ fn workbook_settings_names_and_states() {
     assert_eq!(p.print_area, RangeRef::parse("A1:C10"));
     assert_eq!(p.title_rows, Some((0, 1)));
     assert_eq!(p.title_cols, Some((0, 1)));
-    assert_eq!(wb.names.len(), 3);
+    // The sheet has no AutoFilter, so its hidden `_FilterDatabase` is kept as a name.
+    assert_eq!(wb.names.len(), 4);
+    let fdb = wb.names.iter().find(|n| n.name == "_xlnm._FilterDatabase").unwrap();
+    assert!(fdb.hidden && fdb.scope == Some(0));
     let local = wb.names.iter().find(|n| n.name == "Local").unwrap();
     assert_eq!(local.scope, Some(2), "localSheetId maps past the skipped chart sheet");
     assert_eq!(wb.names.iter().find(|n| n.name == "Rate").unwrap().comment, "tax");

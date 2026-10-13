@@ -296,7 +296,11 @@ fn underline(s: &mut Session, p: &Json) -> Result<Json> {
 
 fn font_name(s: &mut Session, p: &Json) -> Result<Json> {
     let Some(name) = str_param(p, "name").map(str::to_string) else { return Err(bad("home.fontName", "missing `name`")) };
-    apply_style(s, p, |st| st.font.name = name.clone())
+    // A face chosen by name no longer follows the theme.
+    apply_style(s, p, |st| {
+        st.font.name = name.clone();
+        st.font.scheme = gridcraft_model::FontScheme::None;
+    })
 }
 
 fn font_size(s: &mut Session, p: &Json) -> Result<Json> {
@@ -799,6 +803,7 @@ pub fn builtin_cell_style(name: &str, theme: &Theme) -> Option<Style> {
             s.font.size = 18.0;
             s.font.color = Color::Theme(3, 0);
             s.font.name = theme.major_font.clone();
+            s.font.scheme = gridcraft_model::FontScheme::Major;
         }
         "Heading 1" => {
             s.font.size = 15.0;

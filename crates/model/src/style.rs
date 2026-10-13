@@ -151,6 +151,22 @@ pub enum VertAlign {
     Subscript,
 }
 
+/// The theme font a cell font follows (XLSX `<scheme>`): its face is the theme's body (minor) or
+/// heading (major) font instead of the name it carries.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum FontScheme {
+    #[default]
+    None,
+    Minor,
+    Major,
+}
+
+impl FontScheme {
+    pub fn is_none(&self) -> bool {
+        *self == FontScheme::None
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Font {
     pub name: String,
@@ -161,6 +177,9 @@ pub struct Font {
     pub strike: bool,
     pub color: Color,
     pub vert: VertAlign,
+    /// Theme font this font follows; `name` then holds that theme font's face.
+    #[serde(default, skip_serializing_if = "FontScheme::is_none")]
+    pub scheme: FontScheme,
 }
 
 impl Eq for Font {}
@@ -168,7 +187,7 @@ impl Hash for Font {
     fn hash<H: Hasher>(&self, h: &mut H) {
         self.name.hash(h);
         self.size.to_bits().hash(h);
-        (self.bold, self.italic, self.underline, self.strike, self.color, self.vert).hash(h);
+        (self.bold, self.italic, self.underline, self.strike, self.color, self.vert, self.scheme).hash(h);
     }
 }
 
@@ -183,6 +202,8 @@ impl Default for Font {
             strike: false,
             color: Color::Auto,
             vert: VertAlign::Baseline,
+            // The default face is the default theme's body font, which it follows (Excel's Normal).
+            scheme: FontScheme::Minor,
         }
     }
 }

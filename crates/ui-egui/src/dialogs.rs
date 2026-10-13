@@ -1891,7 +1891,8 @@ fn find(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog) {
 }
 
 fn go_to(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool) {
-    let names: Vec<String> = app.session.active().map(|doc| doc.wb.names.iter().map(|n| n.name.clone()).collect()).unwrap_or_default();
+    let names: Vec<String> =
+        app.session.active().map(|doc| doc.wb.names.iter().filter(|n| !n.hidden).map(|n| n.name.clone()).collect()).unwrap_or_default();
     for n in names {
         if ui.selectable_label(false, &n).clicked() {
             d.values.insert("reference".into(), json!(n));

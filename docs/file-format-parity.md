@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** trivial (XLSX chart sheets are kept on save (#727); previously minor: CSV save keeps the separator it was opened with) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (XLSX fonts that follow the theme stay theme fonts, explicit fonts stay explicit, and hidden `_FilterDatabase` names are kept on save) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Every format Excel opens or saves, with GridCraft's read and write support, fidelity and tests.
 Part of [target-app-parity.md](target-app-parity.md). **File formats: ~50% ready, 80–120 h**
@@ -19,6 +19,13 @@ colour, integer width and anchor. Curves, filled paths, transforms and unsupport
 not interpreted as ink. This does not implement Office InkML or fix inserted icons (#551).
 Command and package tests cover repeated saves and unrelated cell edits; external Excel rendering
 and repair-free opening remain unverified.
+
+Cell fonts keep whether they follow the theme (`<scheme>`): a theme font shows and saves as the
+theme's body or heading face, an explicit font in the same face stays explicit, and picking a font
+by name makes it explicit. The hidden `_xlnm._FilterDatabase` names are kept: a sheet with an
+AutoFilter writes its filter range, and a sheet without one keeps the name it was opened with
+(`fonts_and_filter_names.rs`). Column widths are still stored at a 7-pixel digit width, so a width
+that is not a whole pixel at that size can move by a fraction of a character on save.
 
 | Format | Excel | GridCraft read | GridCraft write | Fidelity / notes | Tests |
 |---|---|---|---|---|---|
@@ -85,6 +92,7 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | XLSX: fonts that follow the theme (`scheme`) are read and written as such, so explicit fonts no longer turn into theme fonts and theme fonts saved under another name show the theme's face; hidden `_xlnm._FilterDatabase` names are kept (they were dropped) |
 | 2026-10-12 | trivial | XLSX chart sheets are kept on save (#727) |
 | 2026-10-12 | trivial | CSV and TSV export is capped at 512 MiB and refuses a larger used range with an error (#528) |
 | 2026-10-12 | minor | `.xls` import reads the calculation settings (CalcMode, CalcIter, CalcCount, CalcDelta, CalcPrecision), so circular models calculate instead of showing `#CIRC!` (#724) |

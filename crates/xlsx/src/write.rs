@@ -11,6 +11,9 @@ use crate::package::ZipOut;
 use crate::xml::{esc, esc_attr};
 use crate::{IoError, XlsxKind};
 
+/// The hidden name Excel gives a sheet's filter range.
+const FILTER_DATABASE: &str = "_xlnm._FilterDatabase";
+
 pub const NS_MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 pub const NS_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 pub const XML_DECL: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n";
@@ -265,6 +268,11 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
         {
             continue;
         }
+        // A sheet's AutoFilter writes its own `_FilterDatabase` below; a kept one stays only on a
+        // sheet without an AutoFilter (Advanced Filter, a filter Excel left behind).
+        if n.name.eq_ignore_ascii_case(FILTER_DATABASE) && n.scope.and_then(|sc| wb.sheet(sc)).is_some_and(|sh| sh.autofilter.is_some()) {
+            continue;
+        }
         let _ = write!(names, "<definedName name=\"{}\"", esc_attr(&n.name));
         if let Some(sc) = n.scope {
             let _ = write!(names, " localSheetId=\"{}\"", kept.file_index(sc));
@@ -287,6 +295,16 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
     }
     for (i, sheet) in wb.sheets.iter().enumerate() {
         let q = quote_sheet(&sheet.name);
+        // Excel names each sheet's AutoFilter range `_FilterDatabase` (hidden).
+        if let Some(af) = &sheet.autofilter {
+            let _ = write!(
+                names,
+                "<definedName name=\"{FILTER_DATABASE}\" localSheetId=\"{}\" hidden=\"1\">{}!{}</definedName>",
+                kept.file_index(i),
+                esc(&q),
+                abs_range(&af.range)
+            );
+        }
         if let Some(pa) = &sheet.print.print_area {
             let _ = write!(
                 names,

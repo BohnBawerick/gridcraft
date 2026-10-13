@@ -1426,6 +1426,23 @@ fn multi_cell_array_formulas_and_tables_dont_overlap() {
 }
 
 #[test]
+fn choosing_a_font_by_name_stops_it_following_the_theme() {
+    // A theme font written with a new name would still show the theme's face in Excel.
+    let mut s = s();
+    {
+        let wb = std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().wb);
+        let mut st = gridcraft_model::Style::default();
+        st.font.scheme = gridcraft_model::FontScheme::Minor;
+        let id = wb.styles.intern(st);
+        wb.sheet_mut(0).unwrap().cells.set(CellRef::parse("A1").unwrap(), gridcraft_model::Cell { style: id, ..gridcraft_model::Cell::default() });
+    }
+    s.execute("home.fontName", json!({"range": "A1", "name": "Courier New"})).unwrap();
+    let d = s.doc().unwrap();
+    let font = &d.wb.styles.get(d.wb.sheet(0).unwrap().cell(CellRef::parse("A1").unwrap()).unwrap().style).font;
+    assert_eq!((font.name.as_str(), font.scheme), ("Courier New", gridcraft_model::FontScheme::None));
+}
+
+#[test]
 fn copies_of_a_long_named_sheet_get_unique_names() {
     // Found by the command-sequence fuzzer: `name (2)` was cut to 31 characters, so the second
     // copy of a 30-character name took the first copy's name.
