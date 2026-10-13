@@ -223,6 +223,7 @@ pub fn read_chart(root: &El) -> Option<Chart> {
         },
     };
     Some(Chart {
+        info: Default::default(),
         id: 0,
         kind,
         anchor: Default::default(),

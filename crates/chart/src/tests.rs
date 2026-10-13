@@ -35,6 +35,7 @@ const ALL_KINDS: [ChartKind; 25] = [
 
 fn chart(kind: ChartKind) -> Chart {
     Chart {
+        info: Default::default(),
         id: 1,
         kind,
         anchor: Anchor::default(),

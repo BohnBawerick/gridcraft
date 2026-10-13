@@ -148,12 +148,22 @@ pub(super) fn read(obj: &El, anchor: Anchor) -> Option<Shape> {
         }
         let _ = write!(text, "{},{}", x as f32, y as f32);
     }
-    Some(Shape { id: 0, kind: ShapeKind::Ink, anchor, fill: Color::Rgb((width as u32) << 16), line, text, format: Default::default() })
+    Some(Shape {
+        info: Default::default(),
+        id: 0,
+        kind: ShapeKind::Ink,
+        anchor,
+        fill: Color::Rgb((width as u32) << 16),
+        line,
+        text,
+        format: Default::default(),
+    })
 }
 
 /// Invalid/native out-of-range data uses the existing rectangle fallback. A successful
 /// result is complete before it is appended, so malformed points never yield half a stroke.
-pub(super) fn write(shape: &Shape, theme: &Theme, id: usize) -> Option<String> {
+/// `macro_attr` and `cnvpr` are the object's `macro` attribute and open `<xdr:cNvPr`.
+pub(super) fn write(shape: &Shape, theme: &Theme, macro_attr: &str, cnvpr: &str) -> Option<String> {
     if shape.kind != ShapeKind::Ink || shape.format.no_line {
         return None;
     }
@@ -187,7 +197,7 @@ pub(super) fn write(shape: &Shape, theme: &Theme, id: usize) -> Option<String> {
     }
     let [r, g, b] = shape.line.resolve(theme)?;
     let mut xml = format!(
-        "<xdr:sp macro=\"\" textlink=\"\"><xdr:nvSpPr><xdr:cNvPr id=\"{id}\" name=\"Ink {id}\"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr>{}<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:pathLst><a:path w=\"{w}\" h=\"{h}\" fill=\"none\">",
+        "<xdr:sp{macro_attr} textlink=\"\"><xdr:nvSpPr>{cnvpr}/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr>{}<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:pathLst><a:path w=\"{w}\" h=\"{h}\" fill=\"none\">",
         xfrm(a, "a:xfrm")
     );
     for (i, (x, y)) in points.iter().enumerate() {

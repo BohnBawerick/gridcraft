@@ -1266,7 +1266,7 @@ fn draw_objects(pg: &mut Page, wb: &Workbook, si: usize, sh: &Sheet, b: &Block) 
         let prims = gridcraft_chart::render_sparkline(sp.kind, &vals, [color[0], color[1], color[2], 255], sp.markers, wpx, hpx);
         draw_prims(pg, &prims, Xf { ox: x, oy: y, k: b.k });
     }
-    for im in &sh.images {
+    for im in sh.images.iter().filter(|o| !o.info.hidden) {
         let r = anchor_rect(sh, &im.anchor);
         if !visible(r) {
             continue;
@@ -1278,7 +1278,7 @@ fn draw_objects(pg: &mut Page, wb: &Workbook, si: usize, sh: &Sheet, b: &Block) 
             pg.image_rgba(x, y, w, h, &px, pw, ph);
         }
     }
-    for shp in &sh.shapes {
+    for shp in sh.shapes.iter().filter(|o| !o.info.hidden) {
         let r = anchor_rect(sh, &shp.anchor);
         if !visible(r) {
             continue;
@@ -1339,7 +1339,7 @@ fn draw_objects(pg: &mut Page, wb: &Workbook, si: usize, sh: &Sheet, b: &Block) 
             }
         }
     }
-    for ch in &sh.charts {
+    for ch in sh.charts.iter().filter(|o| !o.info.hidden) {
         let r = anchor_rect(sh, &ch.anchor);
         if !visible(r) {
             continue;
@@ -1998,6 +1998,7 @@ mod tests {
         let wb = std::sync::Arc::make_mut(&mut d.wb);
         let id = wb.next_object_id();
         wb.sheet_mut(0).unwrap().images.push(Image {
+            info: Default::default(),
             id,
             anchor: Anchor { cell: CellRef::new(5, 5), dx: 0.0, dy: 0.0, width: 40.0, height: 40.0, mode: gridcraft_model::AnchorMode::MoveAndSize },
             data: png,

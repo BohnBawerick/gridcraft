@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** trivial (XLSX chart sheets are kept on save (#727); previously minor: CSV save keeps the separator it was opened with) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (pictures, charts and shapes keep their names, ids, hidden flags, macros and stacking order on save) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Every format Excel opens or saves, with GridCraft's read and write support, fidelity and tests.
 Part of [target-app-parity.md](target-app-parity.md). **File formats: ~50% ready, 80–120 h**
@@ -19,6 +19,11 @@ colour, integer width and anchor. Curves, filled paths, transforms and unsupport
 not interpreted as ink. This does not implement Office InkML or fix inserted icons (#551).
 Command and package tests cover repeated saves and unrelated cell edits; external Excel rendering
 and repair-free opening remain unverified.
+
+Pictures, charts and shapes keep what the file says about them on save: their Selection Pane name
+and id, their hidden flag, the macro a shape or chart runs when clicked, and their stacking order.
+Hidden objects are not drawn, printed or clickable in GridCraft. Objects added or copied in
+GridCraft go on top and take ids no other object of the drawing uses (`drawing_identity.rs`).
 
 | Format | Excel | GridCraft read | GridCraft write | Fidelity / notes | Tests |
 |---|---|---|---|---|---|
@@ -85,6 +90,7 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | XLSX: pictures, charts and shapes keep their names and ids, hidden flags, `macro` bindings and stacking order on save (every object was renamed, hidden ones were shown, a button lost its macro and shapes were stacked above charts); hidden objects are not drawn, printed or clickable |
 | 2026-10-12 | trivial | XLSX chart sheets are kept on save (#727) |
 | 2026-10-12 | trivial | CSV and TSV export is capped at 512 MiB and refuses a larger used range with an error (#528) |
 | 2026-10-12 | minor | `.xls` import reads the calculation settings (CalcMode, CalcIter, CalcCount, CalcDelta, CalcPrecision), so circular models calculate instead of showing `#CIRC!` (#724) |
