@@ -171,7 +171,8 @@ pub struct Font {
     pub strike: bool,
     pub color: Color,
     pub vert: VertAlign,
-    /// Theme font this font follows; `name` then holds that theme font's face.
+    /// Theme font this font follows. For theme fonts, `name` caches the resolved face and can
+    /// become stale after copying styles between workbooks. The scheme remains authoritative.
     #[serde(default)]
     pub scheme: FontScheme,
 }
