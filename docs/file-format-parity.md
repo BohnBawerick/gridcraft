@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (pictures, charts and shapes keep their names, ids, hidden flags, macros, VML associations and edited stacking order on save) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (pictures, charts and shapes keep their names, ids, hidden flags, macros, VML associations and edited stacking order on save) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Every format Excel opens or saves, with GridCraft's read and write support, fidelity and tests.
 Part of [target-app-parity.md](target-app-parity.md). **File formats: ~50% ready, 80–120 h**
@@ -27,7 +27,10 @@ GridCraft go on top and take ids no other object of the drawing uses (`drawing_i
 Arrange edits survive saving, and charts moved between sheets receive destination-local ids and
 positions. Hidden objects do not enlarge the automatic print range. DrawingML wrappers retain
 their VML shape associations; unsupported object extensions produce an import warning naming
-the object. Names and macro bindings are preserved without truncation.
+the object. Both documented compatibility URI spellings are accepted and saved in braced form.
+Drawing-level alternate control wrappers remain unmodelled while their VML and control parts
+pass through. Copying a sheet or transferring a chart clears links to legacy shapes that stay
+with the source sheet. Names and macro bindings are preserved without truncation.
 
 | Format | Excel | GridCraft read | GridCraft write | Fidelity / notes | Tests |
 |---|---|---|---|---|---|
@@ -94,6 +97,7 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | XLSX: accept braced and unbraced legacy-wrapper URIs, emit the braced form, and clear VML associations when sheet copies or chart transfers leave their backing content behind |
 | 2026-10-13 | minor | XLSX: preserve VML wrapper associations and full names and macro bindings; retain Arrange edits and destination object ids after chart moves; keep hidden ChartEx fallbacks and objects out of automatic print bounds |
 | 2026-10-13 | minor | XLSX: pictures, charts and shapes keep their names and ids, hidden flags, `macro` bindings and stacking order on save (every object was renamed, hidden ones were shown, a button lost its macro and shapes were stacked above charts); hidden objects are not drawn, printed or clickable |
 | 2026-10-12 | trivial | XLSX chart sheets are kept on save (#727) |

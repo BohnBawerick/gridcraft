@@ -839,6 +839,15 @@ fn move_sheet(s: &mut Session, p: &Json) -> Result<Json> {
             sh.name = name;
             sh.tables.clear(); // table names must be unique
             sh.preserved = None; // kept file content (form controls, OLE objects…) stays with the original
+            for info in sh
+                .charts
+                .iter_mut()
+                .map(|o| &mut o.info)
+                .chain(sh.images.iter_mut().map(|o| &mut o.info))
+                .chain(sh.shapes.iter_mut().map(|o| &mut o.info))
+            {
+                info.compat_spid = None;
+            }
             let at = to.min(n);
             // The copy gets its own copies of the sheet's names, referring to the copy.
             let copies: Vec<gridcraft_model::DefinedName> = cx

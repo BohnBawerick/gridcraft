@@ -131,7 +131,7 @@ fn read_info(cx: &mut Ctx<'_>, obj: &El, order: u32) -> DrawingInfo {
     let mut compat_spid = None;
     for ext in nv.into_iter().flat_map(|n| n.kids("extLst")).flat_map(|list| &list.children) {
         if ext.name == "ext"
-            && ext.attr("uri") == Some(COMPAT_EXT_URI)
+            && ext.attr("uri").is_some_and(|uri| uri.strip_prefix('{').and_then(|s| s.strip_suffix('}')).unwrap_or(uri) == COMPAT_EXT_URI)
             && ext.attrs.len() == 1
             && ext.text.trim().is_empty()
             && let [compat] = ext.children.as_slice()
@@ -394,7 +394,7 @@ fn cnvpr(info: &DrawingInfo, id: u32, default_name: &str, descr: Option<&str>) -
     if let Some(spid) = &info.compat_spid {
         let _ = write!(
             xml,
-            "><a:extLst><a:ext uri=\"{COMPAT_EXT_URI}\"><a14:compatExt xmlns:a14=\"http://schemas.microsoft.com/office/drawing/2010/main\" spid=\"{}\"/></a:ext></a:extLst></xdr:cNvPr>",
+            "><a:extLst><a:ext uri=\"{{{COMPAT_EXT_URI}}}\"><a14:compatExt xmlns:a14=\"http://schemas.microsoft.com/office/drawing/2010/main\" spid=\"{}\"/></a:ext></a:extLst></xdr:cNvPr>",
             esc_attr(spid)
         );
     } else {

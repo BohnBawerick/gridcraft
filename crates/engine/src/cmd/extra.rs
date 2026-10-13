@@ -513,6 +513,7 @@ fn move_chart(s: &mut Session, p: &Json) -> Result<Json> {
             let mut chart = cx.sheet_mut(si)?.charts.remove(ci);
             chart.info.file_id = None;
             chart.info.order = None;
+            chart.info.compat_spid = None;
             cx.sheet_mut(dest)?.charts.push(chart);
         }
         Ok(Json::Null)

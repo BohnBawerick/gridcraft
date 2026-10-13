@@ -211,3 +211,153 @@ fn drawing_identity_hidden_objects_do_not_change_print_bounds_pages_or_scale() {
         assert!(preview["pages"].as_u64().unwrap() > 1, "{kind}");
     }
 }
+
+fn workbook_with_legacy_links() -> Session {
+    use gridcraft_engine::model::{ChartKind, Color, Preserved, PreservedPart, PreservedRel, PreservedXml, ShapeKind};
+
+    let mut session = workbook();
+    let wb = Arc::make_mut(&mut session.doc_mut().unwrap().wb);
+    let sheet = wb.sheet_mut(0).unwrap();
+    sheet.charts[1].kind = ChartKind::Waterfall;
+    sheet.shapes[1].kind = ShapeKind::Ink;
+    sheet.shapes[1].text = "0,0;10,10".into();
+    sheet.shapes[1].fill = Color::Rgb(3 << 16);
+    sheet.shapes[1].line = Color::Rgb(0x123456);
+    let mut kept = Preserved::default();
+    let mut vml = String::from(r#"<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:x="urn:schemas-microsoft-com:office:excel">"#);
+    let mut controls = String::from(
+        r#"<controls xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">"#,
+    );
+    for info in sheet
+        .charts
+        .iter_mut()
+        .map(|o| &mut o.info)
+        .chain(sheet.images.iter_mut().map(|o| &mut o.info))
+        .chain(sheet.shapes.iter_mut().map(|o| &mut o.info))
+    {
+        let id = info.file_id.unwrap();
+        let spid = format!("_x0000_s{id}");
+        info.compat_spid = Some(spid.clone());
+        vml.push_str(&format!(
+            r#"<v:shape id="{spid}"><x:ClientData ObjectType="Button"><x:FmlaMacro>Module1.Run</x:FmlaMacro></x:ClientData></v:shape>"#
+        ));
+        controls.push_str(&format!(r#"<control shapeId="{id}" name="Button{id}" r:id="control{id}"/>"#));
+        let part = format!("xl/ctrlProps/control{id}.xml");
+        kept.rels.push(PreservedRel {
+            id: format!("control{id}"),
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/ctrlProp".into(),
+            target: part.clone(),
+            external: false,
+        });
+        kept.parts.push(PreservedPart {
+            name: part,
+            content_type: "application/vnd.ms-excel.controlproperties+xml".into(),
+            data: Arc::from(
+                br#"<formControlPr xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" objectType="Button"/>"#.as_slice(),
+            ),
+            rels: vec![],
+        });
+    }
+    controls.push_str("</controls>");
+    vml.push_str("</xml>");
+    kept.elements.push(PreservedXml { slot: "controls".into(), xml: controls });
+    kept.vml = Some(PreservedPart {
+        name: "xl/drawings/vmlDrawing1.vml".into(),
+        content_type: "application/vnd.openxmlformats-officedocument.vmlDrawing".into(),
+        data: Arc::from(vml.into_bytes()),
+        rels: vec![],
+    });
+    sheet.preserved = Some(Arc::new(kept));
+    reopen(&mut session)
+}
+
+#[test]
+fn drawing_identity_sheet_copy_drops_all_legacy_links_and_move_keeps_them() {
+    for copy in [false, true] {
+        for to in [0, 1] {
+            let mut session = workbook_with_legacy_links();
+            Arc::make_mut(&mut session.doc_mut().unwrap().wb).sheets.push(Arc::new(Sheet::new("Other")));
+            let source = session.doc().unwrap().wb.sheet(0).unwrap();
+            let name = source.name.clone();
+            let original: Vec<_> = infos(source).into_iter().map(|(_, info)| info.clone()).collect();
+            assert!(original.iter().all(|info| info.compat_spid.is_some()));
+            let original_kept = source.preserved.clone().unwrap();
+            assert!(original_kept.vml.is_some());
+            let count = session.doc().unwrap().wb.sheets.len();
+            session.execute("sheet.move", json!({"sheet": name, "to": to, "copy": copy})).unwrap();
+            for redo in [false, true] {
+                if redo {
+                    session.execute("edit.undo", json!({})).unwrap();
+                    assert_eq!(session.doc().unwrap().wb.sheets.len(), count);
+                    let original_sheet = session.doc().unwrap().wb.sheet(0).unwrap();
+                    assert_eq!(original_sheet.preserved.as_deref(), Some(original_kept.as_ref()));
+                    assert_eq!(infos(original_sheet).into_iter().map(|(_, info)| info.clone()).collect::<Vec<_>>(), original);
+                    session.execute("edit.redo", json!({})).unwrap();
+                }
+                let wb = &session.doc().unwrap().wb;
+                let active = wb.active().unwrap();
+                if copy {
+                    assert!(active.preserved.is_none());
+                    assert!(infos(active).iter().all(|(_, info)| info.compat_spid.is_none()));
+                } else {
+                    assert_eq!(active.preserved.as_deref(), Some(original_kept.as_ref()));
+                    assert_eq!(infos(active).into_iter().map(|(_, info)| info.clone()).collect::<Vec<_>>(), original);
+                }
+                let back = reopen(&mut session);
+                let wb = &back.doc().unwrap().wb;
+                let original_sheet = wb.sheet(wb.sheet_index(&name).unwrap()).unwrap();
+                assert_eq!(original_sheet.preserved.as_ref().unwrap().vml, original_kept.vml);
+                assert_eq!(infos(original_sheet).into_iter().map(|(_, info)| info.clone()).collect::<Vec<_>>(), original);
+                if copy {
+                    let copied = wb.active().unwrap();
+                    assert!(copied.preserved.is_none());
+                    let expected: Vec<_> = original
+                        .iter()
+                        .cloned()
+                        .map(|mut info| {
+                            info.compat_spid = None;
+                            info
+                        })
+                        .collect();
+                    assert_eq!(infos(copied).into_iter().map(|(_, info)| info.clone()).collect::<Vec<_>>(), expected);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn drawing_identity_chart_links_follow_sheet_ownership_through_undo_and_redo() {
+    for cross_sheet in [false, true] {
+        for chart_index in [0, 1] {
+            let mut session = workbook_with_legacy_links();
+            let wb = Arc::make_mut(&mut session.doc_mut().unwrap().wb);
+            let source_name = wb.sheet(0).unwrap().name.clone();
+            let chart = wb.sheet(0).unwrap().charts[chart_index].clone();
+            let kept = wb.sheet(0).unwrap().preserved.clone();
+            wb.sheets.push(Arc::new(Sheet::new("Target")));
+            let destination = if cross_sheet { "Target" } else { source_name.as_str() };
+            session.execute("chart.move", json!({"chart": chart.id, "sheet": destination, "at": "C7"})).unwrap();
+            for redo in [false, true] {
+                if redo {
+                    session.execute("edit.undo", json!({})).unwrap();
+                    let source = session.doc().unwrap().wb.sheet(0).unwrap();
+                    assert_eq!(source.charts[chart_index].info, chart.info);
+                    assert_eq!(source.preserved, kept);
+                    assert!(session.doc().unwrap().wb.sheet(1).unwrap().charts.is_empty());
+                    session.execute("edit.redo", json!({})).unwrap();
+                }
+                let expected = if cross_sheet { None } else { chart.info.compat_spid.as_deref() };
+                let target = session.doc().unwrap().wb.sheet(usize::from(cross_sheet)).unwrap();
+                let moved = target.charts.iter().find(|o| o.id == chart.id).unwrap();
+                assert_eq!(moved.info.compat_spid.as_deref(), expected);
+                let back = reopen(&mut session);
+                let wb = &back.doc().unwrap().wb;
+                let target = wb.sheet(wb.sheet_index(destination).unwrap()).unwrap();
+                let moved = target.charts.iter().find(|o| o.info.name == chart.info.name).unwrap();
+                assert_eq!(moved.info.compat_spid.as_deref(), expected);
+                assert_eq!(wb.sheet(wb.sheet_index(&source_name).unwrap()).unwrap().preserved.as_ref().unwrap().vml, kept.as_ref().unwrap().vml);
+            }
+        }
+    }
+}
