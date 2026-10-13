@@ -316,6 +316,7 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
     let mut w = format!("{XML_DECL}<workbook xmlns=\"{NS_MAIN}\" xmlns:r=\"{NS_REL}\">");
     w.push_str(&crate::passthrough::workbook_elements(wb, "fileVersion"));
     w.push_str("<workbookPr");
+    // XLSX import has already reported invalid workbook code names.
     if let Some(n) = wb.code_name.as_deref().filter(|n| crate::sheet_write::valid_code_name(n)) {
         let _ = write!(w, " codeName=\"{}\"", esc_attr(n));
     }

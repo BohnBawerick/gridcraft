@@ -173,7 +173,14 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
         if p.flag("date1904", false) {
             cx.date_system = DateSystem::D1904;
         }
-        wb.code_name = p.attr("codeName").filter(|n| crate::sheet_write::valid_code_name(n)).map(str::to_string);
+        wb.code_name = p.attr("codeName").and_then(|n| {
+            if crate::sheet_write::valid_code_name(n) {
+                Some(n.to_string())
+            } else {
+                cx.warn(format!("workbook: invalid VBA code name \"{n}\" was dropped"));
+                None
+            }
+        });
     }
     wb.date_system = cx.date_system;
     if let Some(c) = wb_xml.child("calcPr") {
@@ -241,6 +248,14 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
         };
         file_to_model.push(Some(wb.sheets.len()));
         wb.sheets.push(Arc::new(sheet));
+    }
+    for si in 0..wb.sheets.len() {
+        if crate::sheet_write::sheet_code_name(&wb, si).is_none()
+            && let Some(sheet) = wb.sheet_mut(si)
+            && let Some(code_name) = sheet.code_name.take()
+        {
+            cx.warn(format!("sheet \"{}\": duplicate VBA code name \"{code_name}\" was dropped", sheet.name));
+        }
     }
     if wb.sheets.is_empty() {
         cx.warn("the workbook has no worksheets; added an empty sheet");

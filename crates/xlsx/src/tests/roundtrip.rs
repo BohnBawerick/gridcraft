@@ -1224,20 +1224,78 @@ fn vba_code_names_follow_excel_character_rules() {
     }
 }
 
-/// Code names are written only when VBA accepts them and no other module of the workbook already
-/// uses them (VBA names are case-insensitive): a duplicate would stop Excel loading the project.
 #[test]
 fn vba_code_names_are_valid_and_unique_on_save() {
-    let mut wb = Workbook::new();
-    wb.code_name = Some("ThisWorkbook".into());
-    wb.sheets = ["A", "B", "C", "D", "E"].iter().map(|n| Arc::new(Sheet::new(*n))).collect();
-    for (i, code) in [Some("Sheet1"), Some("SHEET1"), Some("thisworkbook"), Some("1st"), Some("Sheet_2")].into_iter().enumerate() {
-        wb.sheet_mut(i).unwrap().code_name = code.map(str::to_string);
+    let mut book =
+        format!(r#"<workbook xmlns="{}" xmlns:r="{}"><workbookPr codeName="ThisWorkbook"/><sheets>"#, crate::write::NS_MAIN, crate::write::NS_REL,);
+    let mut rels = String::from(r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#);
+    let mut parts = Vec::new();
+    for (i, (name, code)) in
+        [("A", "Sheet1"), ("B", "SHEET1"), ("C", "thisworkbook"), ("D", "1st"), ("E", "Sheet_2"), ("F", "sheet1"), ("G", "Dáta·"), ("H", "DÁTA·")]
+            .into_iter()
+            .enumerate()
+    {
+        let id = i + 1;
+        book.push_str(&format!(r#"<sheet name="{name}" sheetId="{id}" r:id="rId{id}"/>"#));
+        rels.push_str(&format!(r#"<Relationship Id="rId{id}" Type="{}/worksheet" Target="worksheets/sheet{id}.xml"/>"#, crate::write::NS_REL));
+        parts.push((
+            format!("xl/worksheets/sheet{id}.xml"),
+            format!(r#"<worksheet xmlns="{}"><sheetPr codeName="{code}"/><sheetData/></worksheet>"#, crate::write::NS_MAIN),
+        ));
     }
-    let (back, _) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
+    book.push_str("</sheets></workbook>");
+    rels.push_str("</Relationships>");
+    parts.extend([
+        ("[Content_Types].xml".into(), super::CT.into()),
+        ("_rels/.rels".into(), super::ROOT_RELS.into()),
+        ("xl/workbook.xml".into(), book),
+        ("xl/_rels/workbook.xml.rels".into(), rels),
+    ]);
+    let bytes = super::make_zip(&parts.iter().map(|(name, data)| (name.as_str(), data.as_bytes())).collect::<Vec<_>>());
+    let (wb, report) = read_xlsx(&bytes).unwrap();
+    let warnings: Vec<&str> = report.warnings.iter().map(String::as_str).filter(|w| w.contains("VBA code name")).collect();
+    assert_eq!(warnings.len(), 5, "{warnings:?}");
+    for warning in [
+        r#"sheet "B": duplicate VBA code name "SHEET1" was dropped"#,
+        r#"sheet "C": duplicate VBA code name "thisworkbook" was dropped"#,
+        r#"sheet "D": invalid VBA code name "1st" was dropped"#,
+        r#"sheet "F": duplicate VBA code name "sheet1" was dropped"#,
+        r#"sheet "H": duplicate VBA code name "DÁTA·" was dropped"#,
+    ] {
+        assert!(warnings.contains(&warning), "{warnings:?}");
+    }
+    let expected = [Some("Sheet1"), None, None, None, Some("Sheet_2"), None, Some("Dáta·"), None];
+    assert_eq!(wb.code_name.as_deref(), Some("ThisWorkbook"));
+    assert_eq!(wb.sheets.iter().map(|s| s.code_name.as_deref()).collect::<Vec<_>>(), expected);
+    let (back, report) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
     let codes: Vec<Option<&str>> = back.sheets.iter().map(|s| s.code_name.as_deref()).collect();
-    assert_eq!(codes, [Some("Sheet1"), None, None, None, Some("Sheet_2")]);
-    // A workbook without code names writes none.
+    assert_eq!(codes, expected);
+    assert_eq!(back.code_name, wb.code_name);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
     let (xml, _) = sheet1_xml(&write_xlsx(&Workbook::new()).unwrap());
     assert!(!xml.contains("codeName"), "{xml}");
+}
+
+#[test]
+fn vba_code_names_rejected_on_import_are_reported() {
+    for code in ["", "1st", "_Sheet", "Bad Name", "Bad.Name", "Bad&Name", "Bad\"Name", &"a".repeat(32), &"表".repeat(32)] {
+        let escaped = crate::xml::esc_attr(code);
+        let bytes =
+            super::minimal(&format!(r#"<sheetPr codeName="{escaped}"/><sheetData/>"#), &[], "", &format!(r#"<workbookPr codeName="{escaped}"/>"#));
+        let (wb, report) = read_xlsx(&bytes).unwrap();
+        assert!(wb.code_name.is_none());
+        assert!(wb.sheet(0).unwrap().code_name.is_none());
+        let warnings: Vec<&str> = report.warnings.iter().map(String::as_str).filter(|w| w.contains("VBA code name")).collect();
+        assert_eq!(
+            warnings,
+            [
+                format!("workbook: invalid VBA code name \"{code}\" was dropped"),
+                format!("sheet \"Data\": invalid VBA code name \"{code}\" was dropped")
+            ]
+        );
+        let (back, report) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
+        assert!(back.code_name.is_none());
+        assert!(back.sheet(0).unwrap().code_name.is_none());
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    }
 }
