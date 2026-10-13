@@ -123,8 +123,7 @@ fn mime_for(name: &str) -> &'static str {
 
 const COMPAT_EXT_URI: &str = "63B3BB69-23CF-44e3-9099-C40C66FF867C";
 
-/// An object's name, id and hidden flag (its `cNvPr`), the macro it runs and its place in the
-/// drawing.
+/// An object's name, id and hidden flag (its `cNvPr`), macro binding and place in the drawing.
 fn read_info(cx: &mut Ctx<'_>, obj: &El, order: u32) -> DrawingInfo {
     let nv = ["nvSpPr", "nvPicPr", "nvGraphicFramePr", "nvCxnSpPr"].iter().find_map(|n| obj.path(&[n, "cNvPr"]));
     let text = |v: Option<&str>| v.filter(|v| !v.is_empty()).map(str::to_owned);
@@ -364,8 +363,8 @@ impl Obj<'_> {
     }
 }
 
-/// `cNvPr` ids for the objects: the file's id while no earlier object took it, else the smallest
-/// id no other object uses, so new and copied objects never share an id with a kept one.
+/// `cNvPr` ids for the objects: the file's id while no earlier object took it, else the first
+/// unused id starting at 2, so new and copied objects never share an id with a kept one.
 fn object_ids(objs: &[&Obj<'_>]) -> Vec<u32> {
     let mut used = std::collections::HashSet::new();
     let mut ids: Vec<Option<u32>> = objs.iter().map(|o| o.info().file_id.filter(|id| used.insert(*id))).collect();
@@ -380,7 +379,7 @@ fn object_ids(objs: &[&Obj<'_>]) -> Vec<u32> {
     ids.into_iter().map(|id| id.unwrap_or(next)).collect()
 }
 
-/// The object's `macro` attribute (empty when it runs none).
+/// The object's `macro` attribute (empty when no binding is stored).
 fn macro_attr(info: &DrawingInfo) -> String {
     format!(" macro=\"{}\"", esc_attr(info.macro_name.as_deref().unwrap_or("")))
 }
@@ -456,8 +455,8 @@ pub(crate) fn retain_compat_links(cx: &mut Ctx<'_>, sheet: &mut Sheet) {
     }
 }
 
-/// The drawing part for a sheet's objects (relationship ids already assigned), in the stacking
-/// order they had in the file; objects added or copied since go on top.
+/// The drawing part for a sheet's objects (relationship ids already assigned), in their stored
+/// stacking order, including Arrange edits; new objects and copies with duplicate positions go on top.
 pub fn write_drawing(sheet: &Sheet, theme: &Theme, objs: &[Obj<'_>]) -> String {
     let mut compat_spids = kept_compat_spids(sheet);
     // A copy carries its original's place; only the first holder keeps it, the rest go on top.

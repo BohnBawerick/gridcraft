@@ -482,10 +482,9 @@ pub struct Trendline {
     pub dash: Option<LineDash>,
 }
 
-/// How a drawing object was named and shown in its file, kept so a save does not rename, show or
-/// unbind it: the Selection Pane name and id (DrawingML `cNvPr`), the hidden flag, the macro the
-/// object runs when clicked (`macro`) and its place in the drawing's stacking order. Objects made
-/// in GridCraft have none of these; the writer names and numbers them.
+/// Imported DrawingML metadata, separate from GridCraft's object ids. XLSX saves use it to retain
+/// object identity, visibility, macro bindings and stacking order. New objects start with default
+/// metadata; the writer assigns their file names and ids.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DrawingInfo {
@@ -493,11 +492,13 @@ pub struct DrawingInfo {
     /// `cNvPr id` in the file; written again when it is still unique in the drawing.
     pub file_id: Option<u32>,
     pub hidden: bool,
-    /// Macro run when the object is clicked (`Module1.Refresh`, `'Book.xlsm'!Refresh`).
+    /// DrawingML `macro` binding, preserved without executing it.
     pub macro_name: Option<String>,
+    /// Sheet-local link to legacy VML. Excluded from JSON because [`Sheet::preserved`](crate::Sheet::preserved)
+    /// is not serialized; XLSX saves emit the link only when its backing shape is retained.
     #[serde(skip)]
     pub compat_spid: Option<String>,
-    /// Position in the file's drawing (0 = bottom); objects without one go on top.
+    /// Stored drawing position (0 = bottom), updated by Arrange; objects without one go on top.
     pub order: Option<u32>,
 }
 
@@ -527,7 +528,7 @@ pub struct Chart {
     /// whenever the PivotTable is refreshed or its layout changes.
     #[serde(default)]
     pub pivot: Option<String>,
-    /// Name, id, hidden flag, macro and stacking order from the file.
+    /// Imported drawing metadata; see [`DrawingInfo`].
     #[serde(default, skip_serializing_if = "DrawingInfo::is_empty")]
     pub info: DrawingInfo,
 }
@@ -541,7 +542,7 @@ pub struct Image {
     pub data: Vec<u8>,
     pub mime: String,
     pub alt: String,
-    /// Name, id, hidden flag, macro and stacking order from the file.
+    /// Imported drawing metadata; see [`DrawingInfo`].
     #[serde(default, skip_serializing_if = "DrawingInfo::is_empty")]
     pub info: DrawingInfo,
 }
@@ -574,7 +575,7 @@ pub struct Shape {
     /// Outline visibility and text formatting (DrawingML `a:ln`, `a:bodyPr`, `a:pPr`, `a:rPr`).
     #[serde(default)]
     pub format: ShapeFormat,
-    /// Name, id, hidden flag, macro and stacking order from the file.
+    /// Imported drawing metadata; see [`DrawingInfo`].
     #[serde(default, skip_serializing_if = "DrawingInfo::is_empty")]
     pub info: DrawingInfo,
 }

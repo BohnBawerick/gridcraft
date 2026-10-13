@@ -1,6 +1,6 @@
 # Architecture
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (created from the code on main; supersedes the local-only plan/architecture.md for committed docs) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** trivial (file preservation limits point to the format reference) · **Target:** Microsoft Excel (Microsoft 365)
 
 How GridCraft is built today. Rules for contributors are in [`AGENTS.md`](../AGENTS.md).
 
@@ -62,10 +62,11 @@ rpm, tarball), FreeBSD, and web (WASM; WebGPU or WebGL2). Release workflows in
 - No threading in calc (see [hardware-parity.md](hardware-parity.md)).
 - No string catalog or text shaping (see [localization-parity.md](localization-parity.md)).
 - XLSX reader builds the whole workbook in memory; no streaming (#175).
-- Unmodelled XLSX parts are not carried through a save.
+- Remaining XLSX preservation limits are listed in [file-format-parity.md](file-format-parity.md#workbook-formats).
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | trivial | Replace the blanket XLSX data-loss claim with a pointer to the format reference |
 | 2026-10-10 | major | Created from the code on main: crates, layers, data flow, agent control, known gaps |

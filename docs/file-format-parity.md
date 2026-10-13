@@ -20,26 +20,32 @@ not interpreted as ink. This does not implement Office InkML or fix inserted ico
 Command and package tests cover repeated saves and unrelated cell edits; external Excel rendering
 and repair-free opening remain unverified.
 
-Pictures, charts and shapes keep what the file says about them on save: their Selection Pane name
-and id, their hidden flag, the macro a shape or chart runs when clicked, and their stacking order.
-Hidden objects are not drawn, printed or clickable in GridCraft. Objects added or copied in
-GridCraft go on top and take ids no other object of the drawing uses (`drawing_identity.rs`).
-Arrange edits survive saving, and charts moved between sheets receive destination-local ids and
-positions. Hidden objects do not enlarge the automatic print range. DrawingML wrappers retain
-their VML shape associations; unsupported object extensions produce an import warning naming
-the object. Both documented compatibility URI spellings are accepted and saved in braced form.
-Drawing-level alternate control wrappers remain unmodelled while their VML and control parts
-pass through. Copying a sheet or transferring a chart clears links to legacy shapes that stay
-with the source sheet. Compatibility links are omitted from JSON and written only for unique
-retained VML shapes, excluding notes. Import removes links to discarded backing shapes with a
-warning naming the object. Both `id` and `o:spid` identify retained VML shapes, including named
-shapes and predefined VML shape elements. Names and macro bindings are preserved without truncation.
+Imported pictures, charts and shapes keep their Selection Pane names, valid unique drawing ids,
+hidden flags, macro bindings and stored stacking order on XLSX/XLSM save. Names and macro bindings
+are preserved without truncation. Hidden objects are not drawn, printed or clickable in GridCraft
+and do not enlarge the automatic print range. Objects added or copied within a sheet go on top
+and receive unused drawing ids on save. Arrange edits survive saving within each object kind.
+Moving a chart within its sheet keeps its id and stacking position; transferring it to another
+sheet assigns them on save without taking existing objects' ids or positions.
+
+Supported DrawingML wrappers keep their `compatExt` links to retained legacy VML shapes. Both
+braced and unbraced compatibility URIs are accepted and saved in braced form. Each written link
+must identify an unambiguous retained shape through its `id` or `o:spid`, including named shapes
+and predefined VML shape elements. Links cannot target notes, take ids assigned to newly written
+notes or share a key with another written object. Import removes invalid links with a warning
+naming the object; save omits links whose backing content is no longer available. Unsupported
+`cNvPr` extensions also produce named import warnings. Copying a sheet or transferring a chart
+clears links to legacy shapes that stay with the source sheet. JSON omits these links because
+it does not carry their backing VML.
+
+Control wrappers in `AlternateContent` at drawing level, or in choices containing shapes or
+pictures instead of chart frames, remain unmodelled; their VML and control parts can pass through.
+Synthetic coverage is in the [XLSX drawing tests](../crates/xlsx/src/tests/drawing_identity.rs)
+and [engine drawing tests](../crates/engine/tests/drawing_identity.rs).
 
 | Format | Excel | GridCraft read | GridCraft write | Fidelity / notes | Tests |
 |---|---|---|---|---|---|
-| `.xlsx` Excel Workbook (transitional) | R/W, native | yes | yes | Cells, shared/array/dynamic formulas, styles, themes, merges, CF, validation, tables, comments and notes, hyperlinks, names, freeze panes, outline, print settings, pictures, shapes, charts (simplified, see [chart-parity.md](chart-parity.md)), sparklines, PivotTables (caches and tables), protection, calc settings. **Kept unchanged on save (pass-through, `passthrough.rs`):** custom document properties, ribbon customisation and add-in task panes, custom XML, links to external workbooks (never followed or refreshed), data connections, sheet query tables, printer settings (#324), form controls, ActiveX controls, OLE objects and sheet backgrounds (with their VML shapes), and chart sheets (#727: the sheet, drawing, chart, style and colour parts are written back unchanged in their place, and left out when a sheet they plot was deleted or renamed or a worksheet took their name; they can't be edited or created); dropped when their sheet is deleted or their parts point at content GridCraft rewrites. **Not preserved:** slicers and slicer caches, timelines, data model, query tables attached to tables, sheet and workbook `extLst` entries we don't model, chart details; Strict Open XML files keep nothing. Never checked in Excel across a corpus: repair prompts unknown. 100 MB files fail (#175) | `roundtrip.rs`, `fixtures.rs`, `malformed.rs`, `pivot_tests.rs` |
-| `.xlsx` Excel Workbook (transitional) | R/W, native | yes | yes | Cells, shared/array/dynamic formulas, styles, themes, merges, CF, validation, tables, notes (with their shown/hidden state) and threaded comments with replies, resolved state and timestamps (`threadedComments` and `persons` parts, #300), hyperlinks, names, freeze panes, outline, print settings, pictures, shapes, charts (simplified, see [chart-parity.md](chart-parity.md)), sparklines, PivotTables (caches and tables), protection, calc settings. **Not preserved:** unmodelled parts and extensions (form controls, slicer caches, timelines, external links, OLE objects, custom XML, data model, query tables, chart details). Never checked in Excel across a corpus: repair prompts unknown. 100 MB files fail (#175) | `roundtrip.rs`, `fixtures.rs`, `malformed.rs`, `pivot_tests.rs` |
-| `.xlsx` Excel Workbook (transitional) | R/W, native | yes | yes | Cells, shared/array/dynamic formulas, styles, themes, merges, CF, validation, tables, comments and notes, hyperlinks, names, freeze panes, outline, print settings, pictures, shapes, charts (simplified, see [chart-parity.md](chart-parity.md)), sparklines, PivotTables (caches and tables), protection, Allow Edit Ranges (`protectedRanges` with their password hashes, #307), calc settings. **Not preserved:** unmodelled parts and extensions (form controls, slicer caches, timelines, external links, OLE objects, custom XML, data model, query tables, chart details). Never checked in Excel across a corpus: repair prompts unknown. 100 MB files fail (#175) | `roundtrip.rs`, `fixtures.rs`, `malformed.rs`, `pivot_tests.rs` |
+| `.xlsx` Excel Workbook (transitional) | R/W, native | yes | yes | Cells, shared/array/dynamic formulas, styles, themes, merges, CF, validation, tables, notes with their shown/hidden state and threaded comments with replies, resolved state and timestamps (`threadedComments` and `persons` parts, #300), hyperlinks, names, freeze panes, outline, print settings, pictures, shapes, charts (simplified, see [chart-parity.md](chart-parity.md)), sparklines, PivotTables (caches and tables), protection, Allow Edit Ranges (`protectedRanges` with their password hashes, #307), calc settings. **Kept unchanged on save (pass-through, `passthrough.rs`):** custom document properties, ribbon customisation and add-in task panes, custom XML, links to external workbooks (never followed or refreshed), data connections, sheet query tables, printer settings (#324), form controls, ActiveX controls, OLE objects and sheet backgrounds (with their VML shapes), and chart sheets (#727: the sheet, drawing, chart, style and colour parts are written back unchanged in their place, and left out when a sheet they plot was deleted or renamed or a worksheet took their name; they can't be edited or created); dropped when their sheet is deleted or their parts point at content GridCraft rewrites. **Not preserved:** slicers and slicer caches, timelines, data model, query tables attached to tables, sheet and workbook `extLst` entries we don't model, chart details; Strict Open XML files do not retain pass-through content. Never checked in Excel across a corpus: repair prompts unknown. 100 MB files fail (#175) | `roundtrip.rs`, `fixtures.rs`, `malformed.rs`, `pivot_tests.rs` |
 | `.xlsx` Strict Open XML | R/W | yes | no (writes transitional) | Excel also saves transitional by default | fixtures |
 | `.xlsm` Macro-Enabled Workbook | R/W | yes | yes, macros kept, not run | The VBA project is kept byte-for-byte and written back only into `.xlsm`/`.xltm` (#6); macros never run. Saved with the macro-enabled workbook content type | `roundtrip.rs` (`vba_project_roundtrip`, `package_kind_sets_workbook_content_type`), engine `io.rs` (`macros_are_saved_only_into_xlsm`) |
 | `.xltx` / `.xltm` templates | R/W | yes | partial | Saved with the template (and macro-enabled template) content type, chosen by extension; `.xltm` keeps a VBA project, `.xltx` drops it; "new from template" behaviour missing | `roundtrip.rs` (`package_kind_sets_workbook_content_type`), engine `io.rs` |
@@ -56,9 +62,7 @@ shapes and predefined VML shape elements. Names and macro bindings are preserved
 
 | Format | Excel | GridCraft read | GridCraft write | Notes |
 |---|---|---|---|---|
-| `.csv` UTF-8 / Windows / Mac / MS-DOS | R/W | yes (UTF-8 and UTF-16 BOMs, UTF-8, Windows-1252 fallback; delimiter detection) | yes (UTF-8 without BOM, CRLF; a file opened as CSV is saved with the separator it was read with, so a `;` file stays `;`; otherwise `,`) | Excel writes the **displayed** values; we write raw values. No encoding choice on save. Re-import of a single-column export splits text (#127) A used range that would write more than 512 MiB (two far-apart cells span the whole rectangle) is refused with an error instead of being expanded (#528). |
-| `.txt` tab-delimited, Unicode text | R/W | yes (`.txt`, `.tsv`, `.tab`) | yes | Text Import Wizard options partly via Text to Columns |
-| `.csv` UTF-8 / Windows / Mac / MS-DOS | R/W | yes (UTF-8 and UTF-16 BOMs, UTF-8, Windows-1252 fallback; delimiter detection) | yes (UTF-8 without BOM, CRLF) | Writes the **displayed** values like Excel (number formats applied, formula results, never column-width `#####`). No encoding choice on save. Re-import of a single-column export splits text (#127) A used range that would write more than 512 MiB (two far-apart cells span the whole rectangle) is refused with an error instead of being expanded (#528). |
+| `.csv` UTF-8 / Windows / Mac / MS-DOS | R/W | yes (UTF-8 and UTF-16 BOMs, UTF-8, Windows-1252 fallback; delimiter detection) | yes (UTF-8 without BOM, CRLF; a file opened as CSV is saved with the separator it was read with, so a `;` file stays `;`; otherwise `,`) | Writes the **displayed** values like Excel (number formats applied, formula results, never column-width `#####`). No encoding choice on save. Re-import of a single-column export splits text (#127) A used range that would write more than 512 MiB (two far-apart cells span the whole rectangle) is refused with an error instead of being expanded (#528). |
 | `.txt` tab-delimited, Unicode text | R/W | yes (`.txt`, `.tsv`, `.tab`) | yes (displayed values) | Text Import Wizard options partly via Text to Columns |
 | `.prn` formatted text (space-delimited) | R/W | no | no | |
 | `.dif`, `.slk` (SYLK) | R/W | no | no | Small, legacy |
@@ -100,6 +104,7 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | trivial | Clarify drawing preservation limits and consolidate contradictory XLSX and text-format rows |
 | 2026-10-13 | minor | XLSX: recognize both `id` and `o:spid` on retained VML shapes so named shapes keep their DrawingML associations |
 | 2026-10-13 | minor | XLSX: compatibility links require retained VML shapes, cannot share IDs or bind to notes, and are excluded from JSON; discarded backing shapes produce named import warnings |
 | 2026-10-13 | minor | XLSX: accept braced and unbraced legacy-wrapper URIs, emit the braced form, and clear VML associations when sheet copies or chart transfers leave their backing content behind |

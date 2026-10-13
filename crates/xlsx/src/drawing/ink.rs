@@ -162,7 +162,7 @@ pub(super) fn read(obj: &El, anchor: Anchor) -> Option<Shape> {
 
 /// Invalid/native out-of-range data uses the existing rectangle fallback. A successful
 /// result is complete before it is appended, so malformed points never yield half a stroke.
-/// `macro_attr` and `cnvpr` are the object's `macro` attribute and open `<xdr:cNvPr`.
+/// `macro_attr` and `cnvpr` are the object's escaped `macro` attribute and complete `<xdr:cNvPr>` element.
 pub(super) fn write(shape: &Shape, theme: &Theme, macro_attr: &str, cnvpr: &str) -> Option<String> {
     if shape.kind != ShapeKind::Ink || shape.format.no_line {
         return None;
