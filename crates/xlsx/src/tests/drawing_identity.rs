@@ -123,15 +123,149 @@ fn new_and_copied_objects_get_unused_ids_and_go_on_top() {
 }
 
 #[test]
-fn hostile_names_and_macros_are_escaped_and_capped() {
-    let long = "x".repeat(5000);
+fn long_names_and_macros_are_escaped_and_preserved() {
+    let long = "x\"<b>&".repeat(1000);
     let (mut wb, _) = read_xlsx(&book()).unwrap();
     let s = wb.sheet_mut(0).unwrap();
-    s.shapes[0].info.name = Some("a\"<b>&".into());
+    s.shapes[0].info.name = Some(long.clone());
     s.shapes[1].info.macro_name = Some(long.clone());
     let saved = write_xlsx(&wb).unwrap();
     let objs = objects(&saved);
-    assert_eq!(objs[0].1, "a\"<b>&");
+    assert_eq!(objs[0].1, long);
     let (back, _) = read_xlsx(&saved).unwrap();
-    assert_eq!(back.sheet(0).unwrap().shapes[1].info.macro_name.as_deref().map(str::len), Some(1024));
+    assert_eq!(back.sheet(0).unwrap().shapes[0].info.name.as_deref(), Some(long.as_str()));
+    assert_eq!(back.sheet(0).unwrap().shapes[1].info.macro_name.as_deref(), Some(long.as_str()));
+}
+
+const COMPAT: &str = r#"<a:ext uri="63B3BB69-23CF-44e3-9099-C40C66FF867C"><a14:compatExt xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main" spid="_x0000_s1025"/></a:ext>"#;
+
+fn legacy_control(extension: &str, connector: bool) -> Vec<u8> {
+    let (tag, nvtag) = if connector { ("cxnSp", "nvCxnSpPr") } else { ("sp", "nvSpPr") };
+    let body = format!(
+        r#"<xdr:{tag}><xdr:{nvtag}><xdr:cNvPr id="1025" name="Legacy button" hidden="1"><a:extLst>{extension}</a:extLst></xdr:cNvPr></xdr:{nvtag}><xdr:spPr><a:prstGeom prst="rect"/></xdr:spPr></xdr:{tag}>"#
+    );
+    let drawing = format!(
+        r#"<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">{}</xdr:wsDr>"#,
+        anchor(0, &body)
+    );
+    let types = super::CT.replace("</Types>", r#"<Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/><Override PartName="/xl/ctrlProps/ctrlProp1.xml" ContentType="application/vnd.ms-excel.controlproperties+xml"/></Types>"#);
+    let workbook = r#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Data" sheetId="1" r:id="rId1"/></sheets></workbook>"#;
+    let wb_rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#;
+    let sheet = r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetData/><drawing r:id="rId1"/><legacyDrawing r:id="rId2"/><controls><control shapeId="1025" name="Legacy button" r:id="rId3"/></controls></worksheet>"#;
+    let sheet_rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawing1.vml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/ctrlProp" Target="../ctrlProps/ctrlProp1.xml"/></Relationships>"#;
+    let vml = r#"<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:x="urn:schemas-microsoft-com:office:excel"><v:shape id="_x0000_s1025"><x:ClientData ObjectType="Button"><x:FmlaMacro>Module1.Run</x:FmlaMacro></x:ClientData></v:shape></xml>"#;
+    let control = r#"<formControlPr xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" objectType="Button"/>"#;
+    super::make_zip(&[
+        ("[Content_Types].xml", types.as_bytes()),
+        ("_rels/.rels", super::ROOT_RELS.as_bytes()),
+        ("xl/workbook.xml", workbook.as_bytes()),
+        ("xl/_rels/workbook.xml.rels", wb_rels.as_bytes()),
+        ("xl/worksheets/sheet1.xml", sheet.as_bytes()),
+        ("xl/worksheets/_rels/sheet1.xml.rels", sheet_rels.as_bytes()),
+        ("xl/drawings/drawing1.xml", drawing.as_bytes()),
+        ("xl/drawings/vmlDrawing1.vml", vml.as_bytes()),
+        ("xl/ctrlProps/ctrlProp1.xml", control.as_bytes()),
+    ])
+}
+
+#[test]
+fn legacy_control_association_and_relationships_survive_two_saves() {
+    for connector in [false, true] {
+        let mut bytes = legacy_control(COMPAT, connector);
+        for _ in 0..2 {
+            let (wb, report) = read_xlsx(&bytes).unwrap();
+            assert!(!report.warnings.iter().any(|w| w.contains("cNvPr")), "{:?}", report.warnings);
+            assert_eq!(wb.sheet(0).unwrap().shapes[0].info.compat_spid.as_deref(), Some("_x0000_s1025"));
+            bytes = write_xlsx(&wb).unwrap();
+            let mut pkg = Package::open(&bytes).unwrap();
+            let drawing = pkg.read_xml("xl/drawings/drawing1.xml").unwrap().unwrap();
+            let nv = drawing.children[0].path(&["sp", "nvSpPr", "cNvPr"]).unwrap();
+            let spid = nv.path(&["extLst", "ext", "compatExt"]).unwrap().attr("spid").unwrap();
+            let sheet = pkg.read_xml("xl/worksheets/sheet1.xml").unwrap().unwrap();
+            let rels = pkg.rels("xl/worksheets/sheet1.xml").unwrap();
+            let vml_id = sheet.child("legacyDrawing").unwrap().attr("id").unwrap();
+            let vml_part = &rels.iter().find(|r| r.id == vml_id).unwrap().target;
+            let vml = pkg.read_xml(vml_part).unwrap().unwrap();
+            let vml_shape = vml.child("shape").unwrap();
+            assert_eq!(vml_shape.attr("id"), Some(spid));
+            assert_eq!(vml_shape.path(&["ClientData", "FmlaMacro"]).unwrap().text, "Module1.Run");
+            let control = sheet.path(&["controls", "control"]).unwrap();
+            assert_eq!(format!("_x0000_s{}", control.attr("shapeId").unwrap()), spid);
+            let control_part = &rels.iter().find(|r| Some(r.id.as_str()) == control.attr("id")).unwrap().target;
+            assert_eq!(pkg.read_xml(control_part).unwrap().unwrap().attr("objectType"), Some("Button"));
+        }
+    }
+}
+
+#[test]
+fn unsupported_object_extensions_warn_with_the_object_name() {
+    for extra in [
+        r#"<a:ext uri="urn:synthetic:unknown"><a:unknown/></a:ext>"#,
+        r#"<a:ext uri="63B3BB69-23CF-44e3-9099-C40C66FF867C"><a:compatExt/></a:ext>"#,
+        COMPAT,
+    ] {
+        let (wb, report) = read_xlsx(&legacy_control(&format!("{COMPAT}{extra}"), false)).unwrap();
+        assert_eq!(wb.sheet(0).unwrap().shapes[0].info.compat_spid.as_deref(), Some("_x0000_s1025"));
+        assert!(report.warnings.iter().any(|w| w.contains("Legacy button") && w.contains("unsupported cNvPr extension")), "{:?}", report.warnings);
+    }
+}
+
+fn properties<'a>(el: &'a El, out: &mut Vec<&'a El>) {
+    if el.name == "cNvPr" {
+        out.push(el);
+    }
+    for child in &el.children {
+        properties(child, out);
+    }
+}
+
+#[test]
+fn every_serializer_keeps_compatibility_links_and_chartex_visibility() {
+    use gridcraft_model::{ChartKind, Color, Image};
+
+    for hidden in [false, true] {
+        let (mut wb, _) = read_xlsx(&book()).unwrap();
+        let sheet = wb.sheet_mut(0).unwrap();
+        let mut shape = sheet.shapes[0].clone();
+        shape.info.compat_spid = Some("_x0000_s1025".into());
+        shape.info.hidden = hidden;
+        sheet.shapes = vec![shape.clone()];
+        sheet.images.push(Image {
+            id: 99,
+            info: shape.info.clone(),
+            anchor: shape.anchor,
+            data: vec![1, 2, 3],
+            mime: "image/png".into(),
+            alt: "Picture & description".into(),
+        });
+        shape.kind = ShapeKind::Ink;
+        shape.text = "0,0;10,10".into();
+        shape.fill = Color::Rgb(3 << 16);
+        shape.line = Color::Rgb(0x123456);
+        sheet.shapes.push(shape.clone());
+        sheet.charts[0].info = shape.info.clone();
+        let mut chart = sheet.charts[0].clone();
+        chart.kind = ChartKind::Waterfall;
+        sheet.charts.push(chart);
+        let bytes = write_xlsx(&wb).unwrap();
+        let mut pkg = Package::open(&bytes).unwrap();
+        let drawing = pkg.read_xml("xl/drawings/drawing1.xml").unwrap().unwrap();
+        let mut props = vec![];
+        properties(&drawing, &mut props);
+        assert_eq!(props.len(), 6);
+        for prop in props {
+            assert_eq!(prop.flag("hidden", false), hidden);
+            assert_eq!(prop.path(&["extLst", "ext", "compatExt"]).unwrap().attr("spid"), Some("_x0000_s1025"));
+        }
+        let (back, report) = read_xlsx(&bytes).unwrap();
+        assert!(!report.warnings.iter().any(|w| w.contains("cNvPr")), "{:?}", report.warnings);
+        let sheet = back.sheet(0).unwrap();
+        assert_eq!(sheet.images[0].alt, "Picture & description");
+        assert_eq!(sheet.shapes[1].kind, ShapeKind::Ink);
+        assert_eq!(sheet.charts[1].kind, ChartKind::Waterfall);
+        for info in sheet.shapes.iter().map(|o| &o.info).chain(sheet.images.iter().map(|o| &o.info)).chain(sheet.charts.iter().map(|o| &o.info)) {
+            assert_eq!(info.compat_spid.as_deref(), Some("_x0000_s1025"));
+            assert_eq!(info.hidden, hidden);
+        }
+    }
 }

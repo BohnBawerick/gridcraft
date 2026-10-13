@@ -197,7 +197,7 @@ pub(super) fn write(shape: &Shape, theme: &Theme, macro_attr: &str, cnvpr: &str)
     }
     let [r, g, b] = shape.line.resolve(theme)?;
     let mut xml = format!(
-        "<xdr:sp{macro_attr} textlink=\"\"><xdr:nvSpPr>{cnvpr}/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr>{}<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:pathLst><a:path w=\"{w}\" h=\"{h}\" fill=\"none\">",
+        "<xdr:sp{macro_attr} textlink=\"\"><xdr:nvSpPr>{cnvpr}<xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr>{}<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:pathLst><a:path w=\"{w}\" h=\"{h}\" fill=\"none\">",
         xfrm(a, "a:xfrm")
     );
     for (i, (x, y)) in points.iter().enumerate() {

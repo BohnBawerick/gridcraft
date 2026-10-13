@@ -121,19 +121,39 @@ fn mime_for(name: &str) -> &'static str {
     }
 }
 
-/// Longest object name or macro kept from a file (Excel's names are far shorter).
-const MAX_INFO_CHARS: usize = 1024;
+const COMPAT_EXT_URI: &str = "63B3BB69-23CF-44e3-9099-C40C66FF867C";
 
 /// An object's name, id and hidden flag (its `cNvPr`), the macro it runs and its place in the
 /// drawing.
-fn read_info(obj: &El, order: u32) -> DrawingInfo {
+fn read_info(cx: &mut Ctx<'_>, obj: &El, order: u32) -> DrawingInfo {
     let nv = ["nvSpPr", "nvPicPr", "nvGraphicFramePr", "nvCxnSpPr"].iter().find_map(|n| obj.path(&[n, "cNvPr"]));
-    let text = |v: Option<&str>| v.filter(|v| !v.is_empty()).map(|v| v.chars().take(MAX_INFO_CHARS).collect::<String>());
+    let text = |v: Option<&str>| v.filter(|v| !v.is_empty()).map(str::to_owned);
+    let mut compat_spid = None;
+    for ext in nv.into_iter().flat_map(|n| n.kids("extLst")).flat_map(|list| &list.children) {
+        if ext.name == "ext"
+            && ext.attr("uri") == Some(COMPAT_EXT_URI)
+            && ext.attrs.len() == 1
+            && ext.text.trim().is_empty()
+            && let [compat] = ext.children.as_slice()
+            && compat.name == "compatExt"
+            && compat.attrs.len() == 1
+            && compat.children.is_empty()
+            && compat.text.trim().is_empty()
+            && let Some(spid) = compat.attr("spid").filter(|s| !s.is_empty())
+            && compat_spid.is_none()
+        {
+            compat_spid = Some(spid.to_owned());
+        } else {
+            let name = nv.and_then(|n| n.attr("name").or_else(|| n.attr("id"))).unwrap_or(&obj.name);
+            cx.warn(format!("drawing object \"{name}\": unsupported cNvPr extension \"{}\" was not retained", ext.attr("uri").unwrap_or(&ext.name)));
+        }
+    }
     DrawingInfo {
         name: text(nv.and_then(|c| c.attr("name"))),
         file_id: nv.and_then(|c| c.attr_u32("id")).filter(|id| *id > 0),
         hidden: nv.is_some_and(|c| c.flag("hidden", false)),
         macro_name: text(obj.attr("macro")),
+        compat_spid,
         order: Some(order),
     }
 }
@@ -160,7 +180,7 @@ pub fn read_drawing(cx: &mut Ctx<'_>, part: &str, sheet: &mut Sheet) -> Result<(
             })
             .collect();
         for obj in objs {
-            let info = read_info(obj, order);
+            let info = read_info(cx, obj, order);
             order = order.saturating_add(1);
             match obj.name.as_str() {
                 "pic" => {
@@ -365,10 +385,22 @@ fn macro_attr(info: &DrawingInfo) -> String {
     format!(" macro=\"{}\"", esc_attr(info.macro_name.as_deref().unwrap_or("")))
 }
 
-/// The object's `<xdr:cNvPr` with its id, name and hidden flag, left open for more attributes.
-fn cnvpr(info: &DrawingInfo, id: u32, default_name: &str) -> String {
+fn cnvpr(info: &DrawingInfo, id: u32, default_name: &str, descr: Option<&str>) -> String {
     let name = info.name.as_deref().unwrap_or(default_name);
-    format!("<xdr:cNvPr id=\"{id}\" name=\"{}\"{}", esc_attr(name), if info.hidden { " hidden=\"1\"" } else { "" })
+    let mut xml = format!("<xdr:cNvPr id=\"{id}\" name=\"{}\"{}", esc_attr(name), if info.hidden { " hidden=\"1\"" } else { "" });
+    if let Some(descr) = descr {
+        let _ = write!(xml, " descr=\"{}\"", esc_attr(descr));
+    }
+    if let Some(spid) = &info.compat_spid {
+        let _ = write!(
+            xml,
+            "><a:extLst><a:ext uri=\"{COMPAT_EXT_URI}\"><a14:compatExt xmlns:a14=\"http://schemas.microsoft.com/office/drawing/2010/main\" spid=\"{}\"/></a:ext></a:extLst></xdr:cNvPr>",
+            esc_attr(spid)
+        );
+    } else {
+        xml.push_str("/>");
+    }
+    xml
 }
 
 /// The drawing part for a sheet's objects (relationship ids already assigned), in the stacking
@@ -395,10 +427,9 @@ pub fn write_drawing(sheet: &Sheet, theme: &Theme, objs: &[Obj<'_>]) -> String {
                 s.push_str(&open);
                 let _ = write!(
                     s,
-                    "<xdr:pic{}><xdr:nvPicPr>{} descr=\"{}\"/><xdr:cNvPicPr><a:picLocks noChangeAspect=\"1\"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip r:embed=\"{rid}\"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr>{}<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic>",
+                    "<xdr:pic{}><xdr:nvPicPr>{}<xdr:cNvPicPr><a:picLocks noChangeAspect=\"1\"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip r:embed=\"{rid}\"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr>{}<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic>",
                     if info.macro_name.is_some() { macro_attr(info) } else { String::new() },
-                    cnvpr(info, id, &format!("Picture {n}")),
-                    esc_attr(&img.alt),
+                    cnvpr(info, id, &format!("Picture {n}"), Some(&img.alt)),
                     xfrm(&img.anchor, "a:xfrm")
                 );
             }
@@ -410,10 +441,12 @@ pub fn write_drawing(sheet: &Sheet, theme: &Theme, objs: &[Obj<'_>]) -> String {
                 let (prefix, ns) = crate::chartex::requires(ch.kind);
                 let _ = write!(
                     s,
-                    "<mc:AlternateContent xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"><mc:Choice xmlns:{prefix}=\"{ns}\" Requires=\"{prefix}\"><xdr:graphicFrame{}><xdr:nvGraphicFramePr>{}/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>{}<a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/drawing/2014/chartex\"><cx:chart xmlns:cx=\"http://schemas.microsoft.com/office/drawing/2014/chartex\" r:id=\"{rid}\"/></a:graphicData></a:graphic></xdr:graphicFrame></mc:Choice><mc:Fallback><xdr:sp macro=\"\" textlink=\"\"><xdr:nvSpPr><xdr:cNvPr id=\"0\" name=\"\"/><xdr:cNvSpPr><a:spLocks noTextEdit=\"1\"/></xdr:cNvSpPr></xdr:nvSpPr><xdr:spPr>{}<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></xdr:spPr><xdr:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang=\"en-US\"/><a:t>This chart type can't be shown by this application.</a:t></a:r></a:p></xdr:txBody></xdr:sp></mc:Fallback></mc:AlternateContent>",
+                    "<mc:AlternateContent xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"><mc:Choice xmlns:{prefix}=\"{ns}\" Requires=\"{prefix}\"><xdr:graphicFrame{}><xdr:nvGraphicFramePr>{}<xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>{}<a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/drawing/2014/chartex\"><cx:chart xmlns:cx=\"http://schemas.microsoft.com/office/drawing/2014/chartex\" r:id=\"{rid}\"/></a:graphicData></a:graphic></xdr:graphicFrame></mc:Choice><mc:Fallback><xdr:sp{} textlink=\"\"><xdr:nvSpPr>{}<xdr:cNvSpPr><a:spLocks noTextEdit=\"1\"/></xdr:cNvSpPr></xdr:nvSpPr><xdr:spPr>{}<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></xdr:spPr><xdr:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang=\"en-US\"/><a:t>This chart type can't be shown by this application.</a:t></a:r></a:p></xdr:txBody></xdr:sp></mc:Fallback></mc:AlternateContent>",
                     macro_attr(info),
-                    cnvpr(info, id, &format!("Chart {n}")),
+                    cnvpr(info, id, &format!("Chart {n}"), None),
                     xfrm(&ch.anchor, "xdr:xfrm"),
+                    macro_attr(info),
+                    cnvpr(info, id, &format!("Chart {n}"), None),
                     xfrm(&ch.anchor, "a:xfrm")
                 );
             }
@@ -423,9 +456,9 @@ pub fn write_drawing(sheet: &Sheet, theme: &Theme, objs: &[Obj<'_>]) -> String {
                 s.push_str(&open);
                 let _ = write!(
                     s,
-                    "<xdr:graphicFrame{}><xdr:nvGraphicFramePr>{}/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>{}<a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/chart\"><c:chart r:id=\"{rid}\"/></a:graphicData></a:graphic></xdr:graphicFrame>",
+                    "<xdr:graphicFrame{}><xdr:nvGraphicFramePr>{}<xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>{}<a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/chart\"><c:chart r:id=\"{rid}\"/></a:graphicData></a:graphic></xdr:graphicFrame>",
                     macro_attr(info),
-                    cnvpr(info, id, &format!("Chart {n}")),
+                    cnvpr(info, id, &format!("Chart {n}"), None),
                     xfrm(&ch.anchor, "xdr:xfrm")
                 );
             }
@@ -433,7 +466,7 @@ pub fn write_drawing(sheet: &Sheet, theme: &Theme, objs: &[Obj<'_>]) -> String {
                 let (open, close) = anchor_open(sheet, &sh.anchor);
                 close_tag = close;
                 s.push_str(&open);
-                if let Some(xml) = ink::write(sh, theme, &macro_attr(info), &cnvpr(info, id, &format!("Ink {id}"))) {
+                if let Some(xml) = ink::write(sh, theme, &macro_attr(info), &cnvpr(info, id, &format!("Ink {id}"), None)) {
                     s.push_str(&xml);
                     s.push_str("<xdr:clientData/>");
                     s.push_str(close_tag);
@@ -450,9 +483,9 @@ pub fn write_drawing(sheet: &Sheet, theme: &Theme, objs: &[Obj<'_>]) -> String {
                 };
                 let _ = write!(
                     s,
-                    "<xdr:sp{} textlink=\"\"><xdr:nvSpPr>{}/><xdr:cNvSpPr{}/></xdr:nvSpPr><xdr:spPr>{}<a:prstGeom prst=\"{prst}\"><a:avLst/></a:prstGeom>",
+                    "<xdr:sp{} textlink=\"\"><xdr:nvSpPr>{}<xdr:cNvSpPr{}/></xdr:nvSpPr><xdr:spPr>{}<a:prstGeom prst=\"{prst}\"><a:avLst/></a:prstGeom>",
                     macro_attr(info),
-                    cnvpr(info, id, &format!("Shape {n}")),
+                    cnvpr(info, id, &format!("Shape {n}"), None),
                     if tx { " txBox=\"1\"" } else { "" },
                     xfrm(&sh.anchor, "a:xfrm")
                 );

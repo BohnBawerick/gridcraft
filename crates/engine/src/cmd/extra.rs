@@ -503,12 +503,18 @@ fn move_chart(s: &mut Session, p: &Json) -> Result<Json> {
     };
     let at = cell_param_on(s, p, "at", target.unwrap_or(si))?;
     edit(s, |cx| {
-        let mut chart = cx.sheet_mut(si)?.charts.remove(ci);
-        if let Some(a) = at {
+        if let Some(a) = at
+            && let Some(chart) = cx.sheet_mut(si)?.charts.get_mut(ci)
+        {
             chart.anchor.cell = a;
         }
         let dest = target.unwrap_or(si);
-        cx.sheet_mut(dest)?.charts.push(chart);
+        if dest != si {
+            let mut chart = cx.sheet_mut(si)?.charts.remove(ci);
+            chart.info.file_id = None;
+            chart.info.order = None;
+            cx.sheet_mut(dest)?.charts.push(chart);
+        }
         Ok(Json::Null)
     })
 }
@@ -557,10 +563,11 @@ fn arrange(s: &mut Session, p: &Json, forward: bool) -> Result<Json> {
     let kind = str_param(p, "kind").unwrap_or("shape").to_string();
     let extreme = bool_param(p, "toFront").or(bool_param(p, "toBack")).unwrap_or(false);
     let si = s.doc()?.wb.active_sheet;
-    fn reorder<T>(v: &mut Vec<T>, i: usize, forward: bool, extreme: bool) {
+    fn reorder<T>(v: &mut Vec<T>, i: usize, forward: bool, extreme: bool, info: fn(&mut T) -> &mut DrawingInfo) {
         if i >= v.len() {
             return;
         }
+        let orders: Vec<_> = v.iter_mut().map(|item| info(item).order).collect();
         let item = v.remove(i);
         let j = match (forward, extreme) {
             (true, true) => v.len(),
@@ -569,23 +576,41 @@ fn arrange(s: &mut Session, p: &Json, forward: bool) -> Result<Json> {
             (false, false) => i.saturating_sub(1),
         };
         v.insert(j, item);
+        for (item, order) in v.iter_mut().zip(orders) {
+            info(item).order = order;
+        }
     }
     edit(s, |cx| {
         let sh = cx.sheet_mut(si)?;
+        let mut infos: Vec<_> = sh
+            .images
+            .iter_mut()
+            .map(|o| &mut o.info)
+            .chain(sh.charts.iter_mut().map(|o| &mut o.info))
+            .chain(sh.shapes.iter_mut().map(|o| &mut o.info))
+            .collect();
+        let mut seen = std::collections::HashSet::new();
+        for info in &mut infos {
+            info.order = info.order.filter(|order| seen.insert(*order));
+        }
+        infos.sort_by_key(|info| info.order.unwrap_or(u32::MAX));
+        for (order, info) in infos.into_iter().enumerate() {
+            info.order = Some(u32::try_from(order).unwrap_or(u32::MAX));
+        }
         match kind.as_str() {
             "chart" => {
                 if let Some(i) = sh.charts.iter().position(|c| c.id == id) {
-                    reorder(&mut sh.charts, i, forward, extreme);
+                    reorder(&mut sh.charts, i, forward, extreme, |c| &mut c.info);
                 }
             }
             "image" => {
                 if let Some(i) = sh.images.iter().position(|c| c.id == id) {
-                    reorder(&mut sh.images, i, forward, extreme);
+                    reorder(&mut sh.images, i, forward, extreme, |c| &mut c.info);
                 }
             }
             _ => {
                 if let Some(i) = sh.shapes.iter().position(|c| c.id == id) {
-                    reorder(&mut sh.shapes, i, forward, extreme);
+                    reorder(&mut sh.shapes, i, forward, extreme, |c| &mut c.info);
                 }
             }
         }
