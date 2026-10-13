@@ -32,7 +32,8 @@ Drawing-level alternate control wrappers remain unmodelled while their VML and c
 pass through. Copying a sheet or transferring a chart clears links to legacy shapes that stay
 with the source sheet. Compatibility links are omitted from JSON and written only for unique
 retained VML shapes, excluding notes. Import removes links to discarded backing shapes with a
-warning naming the object. Names and macro bindings are preserved without truncation.
+warning naming the object. Both `id` and `o:spid` identify retained VML shapes, including named
+shapes and predefined VML shape elements. Names and macro bindings are preserved without truncation.
 
 | Format | Excel | GridCraft read | GridCraft write | Fidelity / notes | Tests |
 |---|---|---|---|---|---|
@@ -99,6 +100,7 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | XLSX: recognize both `id` and `o:spid` on retained VML shapes so named shapes keep their DrawingML associations |
 | 2026-10-13 | minor | XLSX: compatibility links require retained VML shapes, cannot share IDs or bind to notes, and are excluded from JSON; discarded backing shapes produce named import warnings |
 | 2026-10-13 | minor | XLSX: accept braced and unbraced legacy-wrapper URIs, emit the braced form, and clear VML associations when sheet copies or chart transfers leave their backing content behind |
 | 2026-10-13 | minor | XLSX: preserve VML wrapper associations and full names and macro bindings; retain Arrange edits and destination object ids after chart moves; keep hidden ChartEx fallbacks and objects out of automatic print bounds |

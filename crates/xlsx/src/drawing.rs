@@ -418,11 +418,12 @@ fn kept_compat_spids(sheet: &Sheet) -> std::collections::HashSet<String> {
     let mut pending = vec![&root];
     let mut ids = std::collections::HashMap::new();
     while let Some(el) = pending.pop() {
-        if el.name == "shape"
-            && let Some(id) = el.attr("id")
-        {
+        if matches!(el.name.as_str(), "shape" | "arc" | "curve" | "group" | "image" | "line" | "oval" | "polyline" | "rect" | "roundrect") {
             let note = el.child("ClientData").is_some_and(|c| c.attr("ObjectType") == Some("Note"));
-            ids.entry(id.to_owned()).and_modify(|unique| *unique = false).or_insert(!note);
+            let spid = el.attr("spid");
+            for id in spid.into_iter().chain(el.attr("id").filter(|id| Some(*id) != spid)) {
+                ids.entry(id.to_owned()).and_modify(|unique| *unique = false).or_insert(!note);
+            }
         }
         pending.extend(&el.children);
     }

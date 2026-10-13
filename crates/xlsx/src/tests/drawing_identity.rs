@@ -372,6 +372,74 @@ fn replace_part(bytes: &[u8], name: &str, replacement: Option<&[u8]>) -> Vec<u8>
 }
 
 #[test]
+fn named_vml_shape_keys_survive_import_and_two_saves() {
+    for tag in ["shape", "arc", "curve", "group", "image", "line", "oval", "polyline", "rect", "roundrect"] {
+        for (attrs, key) in [
+            (r#"id="Button1" o:spid="_x0000_s1025""#, "_x0000_s1025"),
+            (r#"id="Button1" o:spid="_x0000_s1025""#, "Button1"),
+            (r#"id="_x0000_s1025" o:spid="_x0000_s1025""#, "_x0000_s1025"),
+            (r#"o:spid="_x0000_s1025""#, "_x0000_s1025"),
+            (r#"id="_x0000_s1025""#, "_x0000_s1025"),
+        ] {
+            let vml = format!(
+                r#"<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><v:{tag} {attrs}><x:ClientData ObjectType="Button"/></v:{tag}></xml>"#
+            );
+            let source = legacy_control(&COMPAT.replace("_x0000_s1025", key), false);
+            let mut bytes = replace_part(&source, "xl/drawings/vmlDrawing1.vml", Some(vml.as_bytes()));
+            for _ in 0..2 {
+                let (wb, report) = read_xlsx(&bytes).unwrap();
+                assert_eq!(wb.sheet(0).unwrap().shapes[0].info.compat_spid.as_deref(), Some(key), "{tag} {attrs}");
+                assert!(!report.warnings.iter().any(|w| w.contains("compatibility link removed")), "{:?}", report.warnings);
+                bytes = write_xlsx(&wb).unwrap();
+                let mut pkg = Package::open(&bytes).unwrap();
+                let drawing = pkg.read_xml("xl/drawings/drawing1.xml").unwrap().unwrap();
+                let link = drawing.children[0].path(&["sp", "nvSpPr", "cNvPr", "extLst", "ext", "compatExt"]).unwrap();
+                assert_eq!(link.attr("spid"), Some(key));
+                let sheet = pkg.read_xml("xl/worksheets/sheet1.xml").unwrap().unwrap();
+                let rels = pkg.rels("xl/worksheets/sheet1.xml").unwrap();
+                let vml_id = sheet.child("legacyDrawing").unwrap().attr("id").unwrap();
+                let vml_part = &rels.iter().find(|r| r.id == vml_id).unwrap().target;
+                assert_eq!(pkg.read(vml_part).unwrap().unwrap(), vml.as_bytes());
+            }
+        }
+    }
+}
+
+#[test]
+fn named_vml_shape_keys_still_reject_duplicates_and_notes() {
+    for (shapes, add_note) in [
+        (r#"<v:shape id="Button1" o:spid="_x0000_s1025"/><v:rect id="Button2" o:spid="_x0000_s1025"/>"#, false),
+        (r#"<v:shape id="Button1" o:spid="_x0000_s1025"/><v:rect id="_x0000_s1025"/>"#, false),
+        (r#"<v:rect id="Button1" o:spid="_x0000_s1025"><x:ClientData ObjectType="Note"/></v:rect>"#, false),
+        (r#"<v:shape id="Button1" o:spid="_x0000_s1&#48;25"/>"#, true),
+    ] {
+        let vml = format!(
+            r#"<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">{shapes}</xml>"#
+        );
+        let bytes = replace_part(&legacy_control(COMPAT, false), "xl/drawings/vmlDrawing1.vml", Some(vml.as_bytes()));
+        let (mut wb, report) = read_xlsx(&bytes).unwrap();
+        let sheet = wb.sheet_mut(0).unwrap();
+        if add_note {
+            assert_eq!(sheet.shapes[0].info.compat_spid.as_deref(), Some("_x0000_s1025"));
+            sheet.comments.insert(gridcraft_core::CellRef::new(0, 0), note());
+        } else {
+            assert!(sheet.shapes[0].info.compat_spid.is_none(), "{shapes}");
+            assert!(report.warnings.iter().any(|w| w.contains("Legacy button") && w.contains("compatibility link removed")));
+            sheet.shapes[0].info.compat_spid = Some("_x0000_s1025".into());
+        }
+        let bytes = write_xlsx(&wb).unwrap();
+        let mut pkg = Package::open(&bytes).unwrap();
+        let drawing = pkg.read_xml("xl/drawings/drawing1.xml").unwrap().unwrap();
+        assert!(drawing.children[0].path(&["sp", "nvSpPr", "cNvPr", "extLst"]).is_none(), "{shapes}");
+        if add_note {
+            let vml = pkg.read_xml("xl/drawings/vmlDrawing1.vml").unwrap().unwrap();
+            let note = vml.kids("shape").find(|s| s.child("ClientData").is_some_and(|c| c.attr("ObjectType") == Some("Note"))).unwrap();
+            assert_eq!(note.attr("id"), Some("_x0000_s1025"));
+        }
+    }
+}
+
+#[test]
 fn discarded_vml_clears_compatibility_links_and_names_the_object() {
     for part in ["xl/drawings/vmlDrawing1.vml", "xl/ctrlProps/ctrlProp1.xml"] {
         let bytes = replace_part(&legacy_control(COMPAT, false), part, None);
